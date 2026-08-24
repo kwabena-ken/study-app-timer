@@ -11,6 +11,8 @@ import {
 import { SESSIONS } from "../constants/sessions";
 import { loadTemplates, deleteTemplate } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 /**
  * Runs a callback once, when the component mounts. Screens remount on each
@@ -85,7 +87,7 @@ export default function SessionPickerScreen({
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Text style={styles.backBtnText}>←</Text>
+          <Icon name="chevron-left" size={22} color={theme.textSecondary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Pick a session</Text>
         <View style={styles.spacer} />
@@ -118,7 +120,9 @@ export default function SessionPickerScreen({
                     accessibilityRole="button"
                     accessibilityLabel={`Start template ${tpl.label}`}
                   >
-                    <Text style={styles.templateEmoji}>🗂️</Text>
+                    <View style={styles.templateEmoji}>
+                      <Icon name="edit" size={20} color={theme.accent} />
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.cardTitle} numberOfLines={1}>
                         {tpl.label}
@@ -136,7 +140,7 @@ export default function SessionPickerScreen({
                     accessibilityRole="button"
                     accessibilityLabel={`Delete template ${tpl.label}`}
                   >
-                    <Text style={styles.templateDeleteText}>🗑️</Text>
+                    <Icon name="trash" size={18} color={theme.textMuted} />
                   </TouchableOpacity>
                 </View>
               );
@@ -190,7 +194,7 @@ export default function SessionPickerScreen({
           onPress={onOpenCustomSession}
         >
           <View style={styles.customCardHeader}>
-            <Text style={styles.customCardEmoji}>🎨</Text>
+            <View style={styles.customCardEmoji}><Icon name="plus" size={22} color={theme.accent} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Custom Session</Text>
               <Text style={styles.cardMeta}>
@@ -219,11 +223,12 @@ const makeStyles = (t) =>
     backBtn: {
       backgroundColor: t.hairline,
       borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
+    headerTitle: { color: t.textPrimary, fontSize: 16, fontFamily: FONTS.displayMedium },
     spacer: { width: 40 },
     scroll: { alignItems: "center", padding: 24, paddingTop: 12 },
     subjectBadge: {
@@ -246,13 +251,13 @@ const makeStyles = (t) =>
     subjectText: {
       color: t.textPrimary,
       fontSize: 13,
-      fontWeight: "600",
+      fontFamily: FONTS.bodySemibold,
     },
     templatesSection: { width: "100%", marginBottom: 6 },
     sectionLabel: {
       color: t.textMuted,
       fontSize: 11,
-      fontWeight: "700",
+      fontFamily: FONTS.bodySemibold,
       textTransform: "uppercase",
       letterSpacing: 1,
       marginBottom: 10,
@@ -274,12 +279,11 @@ const makeStyles = (t) =>
       paddingLeft: 16,
       paddingRight: 8,
     },
-    templateEmoji: { fontSize: 20, marginRight: 12 },
+    templateEmoji: { marginRight: 12 },
     templateDelete: {
       paddingHorizontal: 16,
       paddingVertical: 18,
     },
-    templateDeleteText: { fontSize: 15 },
     card: {
       backgroundColor: t.surface,
       borderWidth: 1.5,
@@ -292,16 +296,16 @@ const makeStyles = (t) =>
     cardTitle: {
       color: t.textPrimary,
       fontSize: 17,
-      fontWeight: "700",
+      fontFamily: FONTS.displayMedium,
       marginBottom: 4,
     },
-    cardMeta: { color: t.textMuted, fontSize: 12, marginBottom: 12 },
-    cardMetaTight: { color: t.textMuted, fontSize: 12 },
+    cardMeta: { color: t.textMuted, fontSize: 12, marginBottom: 12, fontFamily: FONTS.body },
+    cardMetaTight: { color: t.textMuted, fontSize: 12, fontFamily: FONTS.body },
     phaseRow: { flexDirection: "row", alignItems: "center", marginBottom: 5 },
     phaseEmoji: { fontSize: 13, marginRight: 8 },
-    phaseRowName: { color: t.textTertiary, fontSize: 12, flex: 1 },
+    phaseRowName: { color: t.textTertiary, fontSize: 12, flex: 1, fontFamily: FONTS.body },
     phaseRowNameBreak: { color: t.textDisabled, fontStyle: "italic" },
-    phaseRowDuration: { color: t.accent, fontSize: 12, fontWeight: "600" },
+    phaseRowDuration: { color: t.accent, fontSize: 12, fontFamily: FONTS.bodySemibold },
     phaseRowDurationBreak: { color: t.textDisabled },
     customCard: {
       borderColor: t.accent,
@@ -312,13 +316,12 @@ const makeStyles = (t) =>
       alignItems: "center",
     },
     customCardEmoji: {
-      fontSize: 24,
       marginRight: 12,
     },
     customArrow: {
       color: t.accent,
       fontSize: 20,
-      fontWeight: "700",
+      fontFamily: FONTS.displayMedium,
       marginLeft: 8,
     },
   });

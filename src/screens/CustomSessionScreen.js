@@ -12,6 +12,8 @@ import {
 import Slider from "@react-native-community/slider";
 import { saveTemplate } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 const PRESET_TAGS = [
   { name: "Deep Study", emoji: "📖", isBreak: false, tip: "Focused, deep work session." },
@@ -238,7 +240,7 @@ export default function CustomSessionScreen({
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Text style={styles.backBtnText}>←</Text>
+          <Icon name="chevron-left" size={22} color={theme.textSecondary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Build Custom Session</Text>
         <View style={styles.spacer} />
@@ -321,7 +323,7 @@ export default function CustomSessionScreen({
               >
                 <Text style={styles.presetTagEmoji}>{tag.emoji}</Text>
                 <Text style={styles.presetTagText}>{tag.name}</Text>
-                <Text style={styles.addPlus}>+</Text>
+                <Icon name="plus" size={14} color={theme.accent} />
               </TouchableOpacity>
             ))}
           </View>
@@ -398,7 +400,7 @@ export default function CustomSessionScreen({
                     accessibilityRole="button"
                     accessibilityLabel={`Remove ${t.name}`}
                   >
-                    <Text style={styles.deleteText}>✕</Text>
+                    <Icon name="trash" size={18} color={theme.danger} />
                   </TouchableOpacity>
                 </View>
 
@@ -410,7 +412,7 @@ export default function CustomSessionScreen({
                     accessibilityRole="button"
                     accessibilityLabel={`Decrease ${t.name} minutes`}
                   >
-                    <Text style={styles.stepBtnText}>-</Text>
+                    <Icon name="minus" size={18} color={theme.textPrimary} />
                   </TouchableOpacity>
 
                   <Slider
@@ -431,7 +433,7 @@ export default function CustomSessionScreen({
                     accessibilityRole="button"
                     accessibilityLabel={`Increase ${t.name} minutes`}
                   >
-                    <Text style={styles.stepBtnText}>+</Text>
+                    <Icon name="plus" size={18} color={theme.textPrimary} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -455,7 +457,8 @@ export default function CustomSessionScreen({
             accessibilityRole="button"
             accessibilityLabel="Save as template"
           >
-            <Text style={styles.saveTemplateBtnText}>💾 Save</Text>
+            <Icon name="check" size={18} color={theme.accent} />
+            <Text style={styles.saveTemplateBtnText}>Save</Text>
           </TouchableOpacity>
         </View>
 
@@ -465,7 +468,8 @@ export default function CustomSessionScreen({
           onPress={handleStart}
           disabled={tasks.length === 0}
         >
-          <Text style={styles.startBtnText}>Start Custom Session ({totalMins}m) ▶</Text>
+          <Icon name="play" size={20} color={theme.onAccent} />
+          <Text style={styles.startBtnText}>Start Custom Session ({totalMins}m)</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -486,11 +490,12 @@ const makeStyles = (t) =>
     backBtn: {
       backgroundColor: t.hairline,
       borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
+    headerTitle: { color: t.textPrimary, fontSize: 16, fontFamily: FONTS.displayBold },
     spacer: { width: 40 },
     scroll: { padding: 20, paddingTop: 10 },
     subjectBadge: {
@@ -506,7 +511,7 @@ const makeStyles = (t) =>
       marginBottom: 16,
     },
     colorDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-    subjectText: { color: t.textPrimary, fontSize: 12, fontWeight: "600" },
+    subjectText: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodySemibold },
     card: {
       backgroundColor: t.surface,
       borderWidth: 1.5,
@@ -518,7 +523,7 @@ const makeStyles = (t) =>
     cardHeader: {
       color: t.textPrimary,
       fontSize: 15,
-      fontWeight: "700",
+      fontFamily: FONTS.displayBold,
       marginBottom: 12,
     },
     pillRow: {
@@ -539,7 +544,7 @@ const makeStyles = (t) =>
       backgroundColor: t.accent,
       borderColor: t.accent,
     },
-    timePillText: { color: t.textTertiary, fontSize: 13, fontWeight: "600" },
+    timePillText: { color: t.textTertiary, fontSize: 13, fontFamily: FONTS.bodySemibold },
     timePillTextActive: { color: t.onAccent },
     customInputRow: {
       flexDirection: "row",
@@ -558,7 +563,7 @@ const makeStyles = (t) =>
       paddingVertical: 8,
     },
     unitText: { color: t.textMuted, fontSize: 13, marginLeft: 8 },
-    subLabel: { color: t.textTertiary, fontSize: 12, fontWeight: "600", marginBottom: 8 },
+    subLabel: { color: t.textTertiary, fontSize: 12, fontFamily: FONTS.bodySemibold, marginBottom: 8 },
     tagGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
@@ -578,8 +583,7 @@ const makeStyles = (t) =>
       borderColor: t.neutral,
     },
     presetTagEmoji: { fontSize: 13, marginRight: 6 },
-    presetTagText: { color: t.textPrimary, fontSize: 12, fontWeight: "500", marginRight: 6 },
-    addPlus: { color: t.accent, fontSize: 14, fontWeight: "700" },
+    presetTagText: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyMedium, marginRight: 6 },
     customTagRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -603,13 +607,13 @@ const makeStyles = (t) =>
       paddingVertical: 8,
       paddingHorizontal: 14,
     },
-    addCustomBtnText: { color: t.onAccent, fontSize: 13, fontWeight: "700" },
+    addCustomBtnText: { color: t.onAccent, fontSize: 13, fontFamily: FONTS.bodyBold },
     allocationHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
     },
-    allocationSummary: { fontSize: 13, fontWeight: "700" },
+    allocationSummary: { fontSize: 13, fontFamily: FONTS.displayBold },
     allocPerfect: { color: t.success },
     allocWarn: { color: t.warning },
     remainingHint: { color: t.accent, fontSize: 12, marginBottom: 10 },
@@ -628,11 +632,10 @@ const makeStyles = (t) =>
       marginBottom: 8,
     },
     taskEmoji: { fontSize: 15, marginRight: 8 },
-    taskName: { color: t.textPrimary, fontSize: 14, fontWeight: "600", flex: 1 },
-    taskDurationText: { color: t.accent, fontSize: 14, fontWeight: "700", marginRight: 10 },
+    taskName: { color: t.textPrimary, fontSize: 14, fontFamily: FONTS.bodySemibold, flex: 1 },
+    taskDurationText: { color: t.accent, fontSize: 14, fontFamily: FONTS.displayBold, marginRight: 10 },
     breakText: { color: t.neutral },
     deleteBtn: { padding: 4 },
-    deleteText: { color: t.danger, fontSize: 14, fontWeight: "700" },
     sliderRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -645,7 +648,6 @@ const makeStyles = (t) =>
       alignItems: "center",
       justifyContent: "center",
     },
-    stepBtnText: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
     slider: {
       flex: 1,
       height: 40,
@@ -675,16 +677,23 @@ const makeStyles = (t) =>
       borderRadius: 12,
       paddingVertical: 12,
       paddingHorizontal: 16,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
     },
     saveTemplateBtnDisabled: {
       opacity: 0.4,
     },
-    saveTemplateBtnText: { color: t.accent, fontSize: 14, fontWeight: "700" },
+    saveTemplateBtnText: { color: t.accent, fontSize: 14, fontFamily: FONTS.bodyBold },
     startBtn: {
       backgroundColor: t.accent,
       borderRadius: 14,
       paddingVertical: 16,
+      flexDirection: "row",
       alignItems: "center",
+      justifyContent: "center",
+      gap: 10,
       marginBottom: 40,
     },
     startBtnDisabled: {
@@ -694,6 +703,6 @@ const makeStyles = (t) =>
     startBtnText: {
       color: t.onAccent,
       fontSize: 16,
-      fontWeight: "700",
+      fontFamily: FONTS.bodyBold,
     },
   });

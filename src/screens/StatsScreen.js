@@ -10,21 +10,21 @@ import {
 import { loadSessions, loadSubjects } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 const TABS = ["Day", "Week", "Month", "All"];
+const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CHART_HEIGHT = 116;
 
-/**
- * Returns midnight of the given date.
- */
+/** Midnight of the given date, in local time. */
 function getStartOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-/**
- * Returns the cutoff date for the given tab.
- */
-function getFilterDate(tab) {
-  const now = new Date();
+/** The cutoff date for a range tab. */
+function getFilterDate(tab, now) {
   switch (tab) {
     case "Day":
       return getStartOfDay(now);
@@ -43,9 +43,12 @@ function getFilterDate(tab) {
   }
 }
 
-/**
- * Formats a number of minutes as "Xh Ym" or just "Xm".
- */
+/** Minutes studied in a session (partials count their actual time). */
+function sessionMins(s) {
+  return s.actualStudyMins != null ? s.actualStudyMins : s.totalStudyMins || 0;
+}
+
+/** Format minutes as "Xh Ym" / "Xh" / "Xm". */
 function formatDuration(mins) {
   if (mins < 60) return `${Math.round(mins)}m`;
   const h = Math.floor(mins / 60);
@@ -54,11 +57,39 @@ function formatDuration(mins) {
 }
 
 /**
- * Stats screen — shows study time per subject with Day/Week/Month/All tabs.
- *
- * @param {{ onGoHome: () => void }} props
+ * Focus minutes for each of the last 7 local days, oldest → today.
+ * Each entry: { mins, label (weekday initial), isToday }.
  */
-export default function StatsScreen({ onGoHome }) {
+function buildLast7(sessions, now) {
+  const startToday = getStartOfDay(now).getTime();
+  const buckets = new Array(7).fill(0);
+  for (const s of sessions) {
+    const when = new Date(s.completedAt || s.startedAt).getTime();
+    if (Number.isNaN(when)) continue;
+    const d = new Date(when);
+    const dayStart = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate()
+    ).getTime();
+    const diff = Math.round((startToday - dayStart) / DAY_MS);
+    if (diff >= 0 && diff < 7) buckets[6 - diff] += sessionMins(s);
+  }
+  return buckets.map((mins, i) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - (6 - i));
+    return { mins, label: DAY_LETTERS[d.getDay()], isToday: i === 6 };
+  });
+}
+
+/**
+ * Insights — the app's focus dashboard.
+ *
+ * Fronted by a seven-day focus bar chart (the signature), then current/best
+ * streak, a range switch, and a per-subject breakdown scoped to that range.
+ * Reached from the tab bar, so it needs no back control.
+ */
+export default function StatsScreen() {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -77,7 +108,9 @@ export default function StatsScreen({ onGoHome }) {
       .catch(() => setLoading(false));
   }, []);
 
-  // Build a map of subject name (lowercase) → color
+  const now = useMemo(() => new Date(), []);
+
+  // Subject name (lowercased) → identity color.
   const subjectColorMap = useMemo(() => {
     const map = {};
     subjects.forEach((s) => {
@@ -86,21 +119,30 @@ export default function StatsScreen({ onGoHome }) {
     return map;
   }, [subjects]);
 
-  // Calculate stats for the active tab
+  const week = useMemo(() => buildLast7(sessions, now), [sessions, now]);
+  const weekTotal = useMemo(
+    () => week.reduce((a, d) => a + d.mins, 0),
+    [week]
+  );
+  const maxDayMins = useMemo(
+    () => Math.max(1, ...week.map((d) => d.mins)),
+    [week]
+  );
+
+  const streak = useMemo(() => computeStreak(sessions, now), [sessions, now]);
+
+  // Per-subject breakdown + totals for the active range.
   const stats = useMemo(() => {
-    const cutoff = getFilterDate(activeTab);
-    const filtered = sessions.filter((s) => {
-      const d = new Date(s.completedAt || s.startedAt);
-      return d >= cutoff;
-    });
+    const cutoff = getFilterDate(activeTab, now);
+    const filtered = sessions.filter(
+      (s) => new Date(s.completedAt || s.startedAt) >= cutoff
+    );
 
     const bySubject = {};
     let totalMins = 0;
-
     filtered.forEach((s) => {
       const subject = s.subject || "Unspecified";
-      const mins =
-        s.actualStudyMins != null ? s.actualStudyMins : s.totalStudyMins || 0;
+      const mins = sessionMins(s);
       if (!bySubject[subject]) {
         bySubject[subject] = { name: subject, mins: 0, sessions: 0 };
       }
@@ -111,89 +153,139 @@ export default function StatsScreen({ onGoHome }) {
 
     const sorted = Object.values(bySubject).sort((a, b) => b.mins - a.mins);
     return { subjects: sorted, totalMins, totalSessions: filtered.length };
-  }, [sessions, activeTab]);
+  }, [sessions, activeTab, now]);
 
-  const streak = useMemo(() => computeStreak(sessions), [sessions]);
+  const hasAny = sessions.length > 0;
 
   return (
     <SafeAreaView style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={onGoHome}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go home"
-        >
-          <Text style={styles.backBtnText}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>📊 Stats</Text>
-        <View style={styles.spacer} />
+        <Text style={styles.eyebrow}>INSIGHTS</Text>
+        <Text style={styles.title}>Your focus</Text>
       </View>
 
-      {!loading && (
-        <View
-          style={styles.streakCard}
-          accessibilityRole="text"
-          accessibilityLabel={`Current streak ${streak.current} day${streak.current === 1 ? "" : "s"}. Best streak ${streak.best} day${streak.best === 1 ? "" : "s"}.`}
-        >
-          <View style={styles.streakCol}>
-            <Text style={styles.streakLabel}>Current streak</Text>
-            <Text style={styles.streakValue}>
-              {streak.current} day{streak.current !== 1 ? "s" : ""}
-            </Text>
-          </View>
-          <View style={styles.streakDivider} />
-          <View style={styles.streakCol}>
-            <Text style={styles.streakLabel}>Best streak</Text>
-            <Text style={styles.streakValue}>
-              {streak.best} day{streak.best !== 1 ? "s" : ""}
-            </Text>
-          </View>
-        </View>
-      )}
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+      >
+        {loading && <Text style={styles.muted}>Loading…</Text>}
 
-      {/* ── Tab bar ── */}
-      <View style={styles.tabRow}>
-        {TABS.map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.tabActive]}
-            onPress={() => setActiveTab(tab)}
-            accessibilityRole="button"
-            accessibilityLabel={`Show ${tab} stats`}
-            accessibilityState={{ selected: activeTab === tab }}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === tab && styles.tabTextActive,
-              ]}
-            >
-              {tab}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {loading && <Text style={styles.emptyText}>Loading...</Text>}
-
-        {!loading && stats.subjects.length === 0 && (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyEmoji}>📭</Text>
-            <Text style={styles.emptyTitle}>No data yet</Text>
-            <Text style={styles.emptyText}>
-              Complete some study sessions to see your stats here!
+        {!loading && !hasAny && (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIcon}>
+              <Icon name="chart" size={26} color={theme.accent} />
+            </View>
+            <Text style={styles.emptyTitle}>No focus logged yet</Text>
+            <Text style={styles.muted}>
+              Finish a study session and your focus time will chart here.
             </Text>
           </View>
         )}
 
-        {!loading && stats.subjects.length > 0 && (
+        {!loading && hasAny && (
           <>
-            {/* ── Total summary card ── */}
-            <View style={styles.totalCard}>
-              <Text style={styles.totalLabel}>Total study time</Text>
+            {/* ── Signature: seven-day focus chart ── */}
+            <View
+              style={styles.chartCard}
+              accessibilityRole="text"
+              accessibilityLabel={`${formatDuration(
+                weekTotal
+              )} focused in the last seven days.`}
+            >
+              <View style={styles.chartHead}>
+                <View>
+                  <Text style={styles.cardLabel}>LAST 7 DAYS</Text>
+                  <Text style={styles.chartTotal}>
+                    {formatDuration(weekTotal)}
+                  </Text>
+                </View>
+                <Text style={styles.chartCaption}>focused</Text>
+              </View>
+
+              <View style={styles.chart}>
+                {week.map((d, i) => {
+                  const h =
+                    d.mins <= 0
+                      ? 3
+                      : Math.max(
+                          8,
+                          Math.round((d.mins / maxDayMins) * CHART_HEIGHT)
+                        );
+                  return (
+                    <View key={i} style={styles.barCol}>
+                      <View style={styles.barTrack}>
+                        <View
+                          style={[
+                            styles.bar,
+                            { height: h },
+                            d.mins <= 0
+                              ? styles.barEmpty
+                              : d.isToday
+                              ? styles.barToday
+                              : styles.barPast,
+                          ]}
+                        />
+                      </View>
+                      <Text
+                        style={[
+                          styles.barLabel,
+                          d.isToday && styles.barLabelToday,
+                        ]}
+                      >
+                        {d.label}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* ── Streak tiles ── */}
+            <View style={styles.tileRow}>
+              <View style={styles.tile}>
+                <View style={styles.tileTop}>
+                  <Icon name="flame" size={18} color={theme.warning} />
+                  <Text style={styles.tileValue}>{streak.current}</Text>
+                </View>
+                <Text style={styles.tileLabel}>
+                  Day{streak.current === 1 ? "" : "s"} streak
+                </Text>
+              </View>
+              <View style={styles.tile}>
+                <View style={styles.tileTop}>
+                  <Text style={styles.tileValue}>{streak.best}</Text>
+                </View>
+                <Text style={styles.tileLabel}>Best streak</Text>
+              </View>
+            </View>
+
+            {/* ── Range switch ── */}
+            <Text style={styles.sectionLabel}>Breakdown</Text>
+            <View style={styles.tabRow}>
+              {TABS.map((tab) => (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.tab, activeTab === tab && styles.tabActive]}
+                  onPress={() => setActiveTab(tab)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show ${tab} breakdown`}
+                  accessibilityState={{ selected: activeTab === tab }}
+                >
+                  <Text
+                    style={[
+                      styles.tabText,
+                      activeTab === tab && styles.tabTextActive,
+                    ]}
+                  >
+                    {tab}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* ── Range total ── */}
+            <View style={styles.totalRow}>
               <Text style={styles.totalValue}>
                 {formatDuration(stats.totalMins)}
               </Text>
@@ -204,44 +296,45 @@ export default function StatsScreen({ onGoHome }) {
             </View>
 
             {/* ── Per-subject breakdown ── */}
-            {stats.subjects.map((s) => {
-              const color =
-                subjectColorMap[s.name.toLowerCase()] || theme.textMuted;
-              const pct =
-                stats.totalMins > 0 ? (s.mins / stats.totalMins) * 100 : 0;
-
-              return (
-                <View key={s.name} style={styles.subjectCard}>
-                  <View style={styles.subjectTop}>
-                    <View
-                      style={[styles.colorDot, { backgroundColor: color }]}
-                    />
-                    <Text style={styles.subjectName}>{s.name}</Text>
-                    <Text style={[styles.subjectTime, { color }]}>
-                      {formatDuration(s.mins)}
+            {stats.subjects.length === 0 ? (
+              <Text style={styles.rangeEmpty}>
+                No focus in this range yet.
+              </Text>
+            ) : (
+              stats.subjects.map((s) => {
+                const color =
+                  subjectColorMap[s.name.toLowerCase()] || theme.neutral;
+                const pct =
+                  stats.totalMins > 0 ? (s.mins / stats.totalMins) * 100 : 0;
+                return (
+                  <View key={s.name} style={styles.subjectRow}>
+                    <View style={styles.subjectTop}>
+                      <View
+                        style={[styles.colorDot, { backgroundColor: color }]}
+                      />
+                      <Text style={styles.subjectName} numberOfLines={1}>
+                        {s.name}
+                      </Text>
+                      <Text style={styles.subjectTime}>
+                        {formatDuration(s.mins)}
+                      </Text>
+                    </View>
+                    <View style={styles.barBg}>
+                      <View
+                        style={[
+                          styles.barFill,
+                          { width: `${Math.max(pct, 2)}%`, backgroundColor: color },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.subjectMeta}>
+                      {s.sessions} session{s.sessions !== 1 ? "s" : ""} ·{" "}
+                      {Math.round(pct)}%
                     </Text>
                   </View>
-
-                  {/* Mini progress bar (proportion of total) */}
-                  <View style={styles.barBg}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        {
-                          width: `${Math.max(pct, 2)}%`,
-                          backgroundColor: color,
-                        },
-                      ]}
-                    />
-                  </View>
-
-                  <Text style={styles.subjectMeta}>
-                    {s.sessions} session{s.sessions !== 1 ? "s" : ""} ·{" "}
-                    {Math.round(pct)}% of total
-                  </Text>
-                </View>
-              );
-            })}
+                );
+              })
+            )}
           </>
         )}
       </ScrollView>
@@ -253,126 +346,210 @@ const makeStyles = (t) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.bg },
     header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
       paddingHorizontal: 20,
-      paddingTop: 12,
-      paddingBottom: 8,
+      paddingTop: 16,
+      paddingBottom: 4,
     },
-    backBtn: {
-      backgroundColor: t.hairline,
-      borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+    eyebrow: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 11,
+      letterSpacing: 2,
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
-    spacer: { width: 40 },
-    streakCard: {
-      flexDirection: "row",
+    title: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 28,
+      marginTop: 4,
+    },
+    scroll: { padding: 20, paddingTop: 16, paddingBottom: 28 },
+    muted: {
+      color: t.textMuted,
+      fontFamily: FONTS.body,
+      fontSize: 13,
+      textAlign: "center",
+      maxWidth: 240,
+    },
+
+    // Empty (no data at all)
+    emptyCard: {
       alignItems: "center",
-      marginHorizontal: 20,
-      marginBottom: 12,
       backgroundColor: t.surface,
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderColor: t.border,
-      borderRadius: 14,
-      paddingVertical: 14,
-      paddingHorizontal: 8,
+      borderRadius: 20,
+      paddingVertical: 36,
+      paddingHorizontal: 24,
+      marginTop: 24,
     },
-    streakCol: {
+    emptyIcon: {
+      width: 56,
+      height: 56,
+      borderRadius: 16,
+      backgroundColor: t.surfaceActive,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 14,
+    },
+    emptyTitle: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
+      fontSize: 17,
+      marginBottom: 6,
+    },
+
+    // Chart card (signature)
+    chartCard: {
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 20,
+      padding: 20,
+      marginBottom: 16,
+    },
+    chartHead: {
+      flexDirection: "row",
+      alignItems: "flex-end",
+      justifyContent: "space-between",
+      marginBottom: 18,
+    },
+    cardLabel: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 11,
+      letterSpacing: 1,
+    },
+    chartTotal: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 30,
+      marginTop: 4,
+    },
+    chartCaption: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 12,
+      marginBottom: 4,
+    },
+    chart: {
+      flexDirection: "row",
+      alignItems: "flex-end",
+      height: CHART_HEIGHT + 24,
+    },
+    barCol: {
       flex: 1,
       alignItems: "center",
+      justifyContent: "flex-end",
     },
-    streakDivider: {
-      width: 1,
-      alignSelf: "stretch",
-      backgroundColor: t.border,
+    barTrack: {
+      height: CHART_HEIGHT,
+      justifyContent: "flex-end",
     },
-    streakLabel: {
+    bar: {
+      width: 22,
+      borderRadius: 7,
+    },
+    barToday: { backgroundColor: t.accent },
+    barPast: { backgroundColor: t.accent, opacity: 0.32 },
+    barEmpty: { backgroundColor: t.dotIdle },
+    barLabel: {
       color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
       fontSize: 11,
-      fontWeight: "600",
-      textTransform: "uppercase",
-      letterSpacing: 0.6,
+      marginTop: 8,
     },
-    streakValue: {
-      color: t.warning,
-      fontSize: 18,
-      fontWeight: "800",
+    barLabelToday: { color: t.textSecondary },
+
+    // Streak tiles
+    tileRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginBottom: 22,
+    },
+    tile: {
+      flex: 1,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 16,
+      paddingVertical: 16,
+      paddingHorizontal: 16,
+    },
+    tileTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    tileValue: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 26,
+    },
+    tileLabel: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 12,
       marginTop: 4,
+    },
+
+    // Range switch
+    sectionLabel: {
+      color: t.textSecondary,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 13,
+      marginBottom: 10,
     },
     tabRow: {
       flexDirection: "row",
-      marginHorizontal: 20,
       backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
       borderRadius: 12,
       padding: 4,
-      marginBottom: 8,
+      marginBottom: 16,
     },
     tab: {
       flex: 1,
-      paddingVertical: 10,
-      borderRadius: 10,
+      paddingVertical: 9,
+      borderRadius: 9,
       alignItems: "center",
     },
-    tabActive: {
-      backgroundColor: t.border,
-    },
+    tabActive: { backgroundColor: t.surfaceActive },
     tabText: {
       color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 13,
-      fontWeight: "600",
     },
-    tabTextActive: {
-      color: t.textPrimary,
-    },
-    scroll: { padding: 20, paddingTop: 12 },
-    emptyWrap: { alignItems: "center", marginTop: 60 },
-    emptyEmoji: { fontSize: 48, marginBottom: 12 },
-    emptyTitle: {
-      color: t.textPrimary,
-      fontSize: 18,
-      fontWeight: "700",
-      marginBottom: 6,
-    },
-    emptyText: {
-      color: t.textMuted,
-      fontSize: 13,
-      textAlign: "center",
-      maxWidth: 220,
-    },
-    totalCard: {
-      backgroundColor: t.surface,
-      borderWidth: 1.5,
-      borderColor: t.border,
-      borderRadius: 16,
-      padding: 20,
-      alignItems: "center",
-      marginBottom: 20,
-    },
-    totalLabel: {
-      color: t.textMuted,
-      fontSize: 12,
-      fontWeight: "600",
-      textTransform: "uppercase",
-      letterSpacing: 1,
+    tabTextActive: { color: t.textPrimary },
+
+    // Range total
+    totalRow: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      gap: 10,
+      marginBottom: 16,
     },
     totalValue: {
       color: t.textPrimary,
-      fontSize: 36,
-      fontWeight: "800",
-      marginTop: 4,
+      fontFamily: FONTS.displayBold,
+      fontSize: 24,
     },
     totalSub: {
       color: t.textMuted,
-      fontSize: 12,
-      marginTop: 4,
+      fontFamily: FONTS.body,
+      fontSize: 13,
     },
-    subjectCard: {
+    rangeEmpty: {
+      color: t.textMuted,
+      fontFamily: FONTS.body,
+      fontSize: 13,
+      paddingVertical: 8,
+    },
+
+    // Per-subject rows
+    subjectRow: {
       backgroundColor: t.surface,
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderColor: t.border,
       borderRadius: 14,
       padding: 16,
@@ -384,26 +561,28 @@ const makeStyles = (t) =>
       marginBottom: 10,
     },
     colorDot: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
       marginRight: 10,
     },
     subjectName: {
       color: t.textPrimary,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 15,
-      fontWeight: "600",
       flex: 1,
     },
     subjectTime: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
       fontSize: 15,
-      fontWeight: "700",
     },
     barBg: {
       backgroundColor: t.progressTrack,
       height: 6,
       borderRadius: 3,
       marginBottom: 8,
+      overflow: "hidden",
     },
     barFill: {
       height: 6,
@@ -411,6 +590,7 @@ const makeStyles = (t) =>
     },
     subjectMeta: {
       color: t.textMuted,
+      fontFamily: FONTS.body,
       fontSize: 11,
     },
   });

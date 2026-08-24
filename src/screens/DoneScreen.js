@@ -9,6 +9,8 @@ import {
 import { loadSessions, saveSession } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 /**
  * Done screen — shown after completing all phases of a session.
@@ -103,6 +105,7 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
         )}
 
         <TouchableOpacity style={styles.homeButton} onPress={onGoHome}>
+          <Icon name="home" size={18} color={theme.onAccent} />
           <Text style={styles.homeButtonText}>Back to Home</Text>
         </TouchableOpacity>
       </View>
@@ -120,7 +123,7 @@ const makeStyles = (t) =>
       padding: 28,
     },
     emoji: { fontSize: 56, marginBottom: 16 },
-    title: { color: t.textPrimary, fontSize: 24, fontWeight: "800" },
+    title: { color: t.textPrimary, fontSize: 24, fontFamily: FONTS.displayBold },
     subjectBadge: {
       backgroundColor: t.surface,
       borderRadius: 16,
@@ -131,7 +134,7 @@ const makeStyles = (t) =>
     subjectText: {
       color: t.accent,
       fontSize: 13,
-      fontWeight: "700",
+      fontFamily: FONTS.bodyBold,
     },
     subtitle: {
       color: t.textMuted,
@@ -157,20 +160,24 @@ const makeStyles = (t) =>
     streakText: {
       color: t.warning,
       fontSize: 14,
-      fontWeight: "700",
+      fontFamily: FONTS.bodyBold,
       marginBottom: 8,
     },
     savedText: {
       color: t.success,
       fontSize: 12,
-      fontWeight: "600",
+      fontFamily: FONTS.bodySemibold,
       marginBottom: 16,
     },
     homeButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
       backgroundColor: t.accent,
       borderRadius: 12,
       paddingVertical: 13,
       paddingHorizontal: 34,
     },
-    homeButtonText: { color: t.onAccent, fontSize: 14, fontWeight: "700" },
+    homeButtonText: { color: t.onAccent, fontSize: 14, fontFamily: FONTS.bodyBold },
   });

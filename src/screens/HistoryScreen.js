@@ -17,6 +17,8 @@ import {
   loadSubjects,
 } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 /**
  * Simple hook that runs a callback every time the component mounts.
@@ -187,16 +189,8 @@ export default function HistoryScreen({ onGoHome }) {
     <SafeAreaView style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={onGoHome}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go home"
-        >
-          <Text style={styles.backBtnText}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>📋 History</Text>
-        <View style={styles.spacer} />
+        <Text style={styles.eyebrow}>HISTORY</Text>
+        <Text style={styles.title}>Your sessions</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -244,7 +238,7 @@ export default function HistoryScreen({ onGoHome }) {
                           accessibilityRole="button"
                           accessibilityLabel="Save name"
                         >
-                          <Text style={styles.editSave}>✓</Text>
+                          <Icon name="check" size={18} color={theme.success} />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={handleCancelEdit}
@@ -252,7 +246,7 @@ export default function HistoryScreen({ onGoHome }) {
                           accessibilityRole="button"
                           accessibilityLabel="Cancel editing"
                         >
-                          <Text style={styles.editCancel}>✕</Text>
+                          <Icon name="close" size={18} color={theme.textMuted} />
                         </TouchableOpacity>
                       </View>
                     ) : (
@@ -270,7 +264,7 @@ export default function HistoryScreen({ onGoHome }) {
                           accessibilityRole="button"
                           accessibilityLabel="Edit subject"
                         >
-                          <Text style={styles.iconText}>✏️</Text>
+                          <Icon name="edit" size={18} color={theme.textSecondary} />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => handleDelete(s.id)}
@@ -278,7 +272,7 @@ export default function HistoryScreen({ onGoHome }) {
                           accessibilityRole="button"
                           accessibilityLabel="Delete session"
                         >
-                          <Text style={styles.iconText}>🗑️</Text>
+                          <Icon name="trash" size={18} color={theme.danger} />
                         </TouchableOpacity>
                       </>
                     )}
@@ -319,33 +313,34 @@ const makeStyles = (t) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.bg },
     header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
       paddingHorizontal: 20,
-      paddingTop: 12,
-      paddingBottom: 8,
+      paddingTop: 16,
+      paddingBottom: 4,
     },
-    backBtn: {
-      backgroundColor: t.hairline,
-      borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+    eyebrow: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 11,
+      letterSpacing: 2,
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
-    spacer: { width: 40 },
-    scroll: { padding: 20, paddingTop: 8 },
+    title: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 28,
+      marginTop: 4,
+    },
+    scroll: { padding: 20, paddingTop: 12 },
     emptyWrap: { alignItems: "center", marginTop: 80 },
     emptyEmoji: { fontSize: 48, marginBottom: 12 },
     emptyTitle: {
       color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
       fontSize: 18,
-      fontWeight: "700",
       marginBottom: 6,
     },
     emptyText: {
       color: t.textMuted,
+      fontFamily: FONTS.body,
       fontSize: 13,
       textAlign: "center",
       maxWidth: 220,
@@ -353,8 +348,8 @@ const makeStyles = (t) =>
     dayGroup: { marginBottom: 20 },
     dayLabel: {
       color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 11,
-      fontWeight: "700",
       textTransform: "uppercase",
       letterSpacing: 1,
       marginBottom: 8,
@@ -379,18 +374,17 @@ const makeStyles = (t) =>
       marginRight: 10,
     },
     cardSubject: {
+      fontFamily: FONTS.bodyBold,
       fontSize: 13,
-      fontWeight: "700",
       marginBottom: 2,
     },
-    cardTitle: { color: t.textPrimary, fontSize: 15, fontWeight: "700" },
-    cardMeta: { color: t.textTertiary, fontSize: 12, marginBottom: 2, marginLeft: 20 },
-    cardTime: { color: t.textMuted, fontSize: 11, marginLeft: 20 },
+    cardTitle: { color: t.textPrimary, fontFamily: FONTS.bodyBold, fontSize: 15 },
+    cardMeta: { color: t.textTertiary, fontFamily: FONTS.body, fontSize: 12, marginBottom: 2, marginLeft: 20 },
+    cardTime: { color: t.textMuted, fontFamily: FONTS.body, fontSize: 11, marginLeft: 20 },
     iconBtn: {
       paddingHorizontal: 6,
       paddingVertical: 4,
     },
-    iconText: { fontSize: 14 },
     editRow: {
       flex: 1,
       flexDirection: "row",
@@ -399,6 +393,7 @@ const makeStyles = (t) =>
     editInput: {
       flex: 1,
       color: t.textPrimary,
+      fontFamily: FONTS.body,
       fontSize: 14,
       backgroundColor: t.surfaceAlt,
       borderWidth: 1,
@@ -411,8 +406,6 @@ const makeStyles = (t) =>
       paddingHorizontal: 8,
       paddingVertical: 4,
     },
-    editSave: { color: t.success, fontSize: 18, fontWeight: "700" },
-    editCancel: { color: t.danger, fontSize: 18, fontWeight: "700" },
     clearBtn: {
       alignSelf: "center",
       borderWidth: 1,
@@ -425,7 +418,7 @@ const makeStyles = (t) =>
     },
     clearBtnText: {
       color: t.danger,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 12,
-      fontWeight: "600",
     },
   });
