@@ -5,12 +5,17 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.kwabena.studytimer",
       "supportsTablet": false
     },
     "android": {
       "package": "com.kwabena.studytimer",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
       "permissions": [
         "NOTIFICATIONS",
         "SCHEDULE_EXACT_ALARM",
@@ -31,7 +36,16 @@
           ]
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220
+        }
+      ],
+      "expo-font"
     ],
     "extra": {
       "eas": {

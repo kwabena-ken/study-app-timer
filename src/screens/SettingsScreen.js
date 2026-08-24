@@ -12,6 +12,8 @@ import { loadSettings, saveSettings } from "../utils/storage";
 import { useAlarmSound } from "../hooks/useAlarmSound";
 import { useTheme } from "../theme/ThemeContext";
 import { THEME_OPTIONS } from "../theme/themes";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 const SOUND_OPTIONS = [
   {
@@ -94,16 +96,8 @@ export default function SettingsScreen({ onGoHome }) {
     <SafeAreaView style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={onGoHome}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go home"
-        >
-          <Text style={styles.backBtnText}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>⚙️ Settings</Text>
-        <View style={styles.spacer} />
+        <Text style={styles.eyebrow}>SETTINGS</Text>
+        <Text style={styles.title}>Preferences</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -244,7 +238,9 @@ export default function SettingsScreen({ onGoHome }) {
                       >
                         {opt.name}
                       </Text>
-                      {isActive && <Text style={styles.checkIcon}>✓</Text>}
+                      {isActive && (
+                        <Icon name="check" size={16} color={theme.accent} />
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -261,24 +257,25 @@ const makeStyles = (t) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.bg },
     header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
       paddingHorizontal: 20,
-      paddingTop: 12,
-      paddingBottom: 8,
+      paddingTop: 16,
+      paddingBottom: 4,
     },
-    backBtn: {
-      backgroundColor: t.hairline,
-      borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+    eyebrow: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 11,
+      letterSpacing: 2,
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
+    title: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 28,
+      marginTop: 4,
+    },
     spacer: { width: 40 },
-    scroll: { padding: 20, paddingTop: 10 },
-    loadingText: { color: t.textMuted, fontSize: 14, textAlign: "center", marginTop: 40 },
+    scroll: { padding: 20, paddingTop: 12 },
+    loadingText: { color: t.textMuted, fontSize: 14, textAlign: "center", marginTop: 40, fontFamily: FONTS.body },
     sectionCard: {
       backgroundColor: t.surface,
       borderWidth: 1.5,
@@ -287,8 +284,8 @@ const makeStyles = (t) =>
       padding: 18,
       marginBottom: 16,
     },
-    sectionTitle: { color: t.textPrimary, fontSize: 15, fontWeight: "700" },
-    sectionSubtitle: { color: t.textMuted, fontSize: 12, marginTop: 4, marginBottom: 14 },
+    sectionTitle: { color: t.textPrimary, fontSize: 15, fontFamily: FONTS.displayMedium },
+    sectionSubtitle: { color: t.textMuted, fontSize: 12, marginTop: 4, marginBottom: 14, fontFamily: FONTS.body },
     soundOptionRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -321,9 +318,9 @@ const makeStyles = (t) =>
     radioCircleSelected: { borderColor: t.accent },
     radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.accent },
     optionEmoji: { fontSize: 18, marginRight: 10 },
-    optionName: { color: t.textTertiary, fontSize: 14, fontWeight: "600" },
+    optionName: { color: t.textTertiary, fontSize: 14, fontFamily: FONTS.bodySemibold },
     optionNameSelected: { color: t.textPrimary },
-    optionDesc: { color: t.textMuted, fontSize: 11, marginTop: 2 },
+    optionDesc: { color: t.textMuted, fontSize: 11, marginTop: 2, fontFamily: FONTS.body },
     testBtn: {
       backgroundColor: t.border,
       borderRadius: 10,
@@ -334,7 +331,7 @@ const makeStyles = (t) =>
     testBtnPlaying: {
       backgroundColor: t.danger,
     },
-    testBtnText: { color: t.textPrimary, fontSize: 12, fontWeight: "600" },
+    testBtnText: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodySemibold },
     toggleRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -342,8 +339,8 @@ const makeStyles = (t) =>
       borderBottomWidth: 1,
       borderBottomColor: t.border,
     },
-    toggleTitle: { color: t.textPrimary, fontSize: 14, fontWeight: "600" },
-    toggleDesc: { color: t.textMuted, fontSize: 11, marginTop: 2, paddingRight: 12 },
+    toggleTitle: { color: t.textPrimary, fontSize: 14, fontFamily: FONTS.bodySemibold },
+    toggleDesc: { color: t.textMuted, fontSize: 11, marginTop: 2, paddingRight: 12, fontFamily: FONTS.body },
     themeRow: { flexDirection: "row", gap: 10, marginTop: 12 },
     themePill: {
       flex: 1,
@@ -362,7 +359,6 @@ const makeStyles = (t) =>
       borderColor: t.accent,
     },
     themePillEmoji: { fontSize: 14, marginRight: 6 },
-    themePillText: { color: t.textMuted, fontSize: 12, fontWeight: "600" },
-    themePillTextActive: { color: t.textPrimary, fontSize: 12, fontWeight: "700" },
-    checkIcon: { color: t.accent, fontSize: 12, fontWeight: "700", marginLeft: 4 },
+    themePillText: { color: t.textMuted, fontSize: 12, fontFamily: FONTS.bodySemibold },
+    themePillTextActive: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyBold },
   });

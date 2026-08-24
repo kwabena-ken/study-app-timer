@@ -97,13 +97,178 @@ const light = {
   dotIdle: "rgba(0,0,0,0.15)",
 };
 
-export const THEMES = { dark, oled, light };
+const forest = {
+  name: "forest",
+  isDark: true,
+
+  bg: "#0c1612",
+  bgSession: "#0f1c17",
+  surface: "#14241e",
+  surfaceAlt: "#0f1c17",
+  surfaceActive: "#1a3028",
+  border: "#203a30",
+  hairline: "rgba(255,255,255,0.07)",
+
+  textPrimary: "#eaf5f0",
+  textSecondary: "#a0c4b4",
+  textTertiary: "#7fa896",
+  textMuted: "#4b6e5f",
+  textDisabled: "#365246",
+  onAccent: "#ffffff",
+
+  accent: "#34d399",
+  success: "#10b981",
+  danger: "#f87171",
+  warning: "#fbbf24",
+  neutral: "#6b7280",
+
+  timerText: "#ffffff",
+  textFaint: "rgba(255,255,255,0.4)",
+  overlayBtn: "rgba(255,255,255,0.08)",
+  progressTrack: "rgba(255,255,255,0.08)",
+  dotIdle: "rgba(255,255,255,0.18)",
+};
+
+const espresso = {
+  name: "espresso",
+  isDark: true,
+
+  bg: "#140f0c",
+  bgSession: "#1a1410",
+  surface: "#221a15",
+  surfaceAlt: "#1a1410",
+  surfaceActive: "#2e221b",
+  border: "#3a2c23",
+  hairline: "rgba(255,255,255,0.07)",
+
+  textPrimary: "#f7eee8",
+  textSecondary: "#d6c2b4",
+  textTertiary: "#b89f8f",
+  textMuted: "#735d50",
+  textDisabled: "#544339",
+  onAccent: "#ffffff",
+
+  accent: "#e69b52",
+  success: "#4caf6e",
+  danger: "#e06070",
+  warning: "#f3b779",
+  neutral: "#8c7b70",
+
+  timerText: "#ffffff",
+  textFaint: "rgba(255,255,255,0.4)",
+  overlayBtn: "rgba(255,255,255,0.08)",
+  progressTrack: "rgba(255,255,255,0.08)",
+  dotIdle: "rgba(255,255,255,0.18)",
+};
+
+const synthwave = {
+  name: "synthwave",
+  isDark: true,
+
+  bg: "#0b0719",
+  bgSession: "#100a24",
+  surface: "#170f33",
+  surfaceAlt: "#100a24",
+  surfaceActive: "#22164a",
+  border: "#32206d",
+  hairline: "rgba(255,255,255,0.08)",
+
+  textPrimary: "#fae8ff",
+  textSecondary: "#d8b4fe",
+  textTertiary: "#c084fc",
+  textMuted: "#6b43a3",
+  textDisabled: "#4c2e78",
+  onAccent: "#ffffff",
+
+  accent: "#d946ef",
+  success: "#34d399",
+  danger: "#ff4d6d",
+  warning: "#f59e0b",
+  neutral: "#818cf8",
+
+  timerText: "#ffffff",
+  textFaint: "rgba(255,255,255,0.4)",
+  overlayBtn: "rgba(255,255,255,0.08)",
+  progressTrack: "rgba(255,255,255,0.08)",
+  dotIdle: "rgba(255,255,255,0.18)",
+};
+
+const ocean = {
+  name: "ocean",
+  isDark: true,
+
+  bg: "#06111e",
+  bgSession: "#081729",
+  surface: "#0d2038",
+  surfaceAlt: "#081729",
+  surfaceActive: "#122a4a",
+  border: "#1a3960",
+  hairline: "rgba(255,255,255,0.07)",
+
+  textPrimary: "#e0f2fe",
+  textSecondary: "#93c5fd",
+  textTertiary: "#60a5fa",
+  textMuted: "#3b82f6",
+  textDisabled: "#1e3a8a",
+  onAccent: "#ffffff",
+
+  accent: "#38bdf8",
+  success: "#34d399",
+  danger: "#fb7185",
+  warning: "#fbbf24",
+  neutral: "#64748b",
+
+  timerText: "#ffffff",
+  textFaint: "rgba(255,255,255,0.4)",
+  overlayBtn: "rgba(255,255,255,0.08)",
+  progressTrack: "rgba(255,255,255,0.08)",
+  dotIdle: "rgba(255,255,255,0.18)",
+};
+
+const sakura = {
+  name: "sakura",
+  isDark: true,
+
+  bg: "#180c14",
+  bgSession: "#21101b",
+  surface: "#2c1624",
+  surfaceAlt: "#21101b",
+  surfaceActive: "#3a1d30",
+  border: "#4f2742",
+  hairline: "rgba(255,255,255,0.07)",
+
+  textPrimary: "#fce7f3",
+  textSecondary: "#f472b6",
+  textTertiary: "#e879f9",
+  textMuted: "#863b6e",
+  textDisabled: "#5e294d",
+  onAccent: "#ffffff",
+
+  accent: "#fb7185",
+  success: "#34d399",
+  danger: "#f43f5e",
+  warning: "#fbbf24",
+  neutral: "#a21caf",
+
+  timerText: "#ffffff",
+  textFaint: "rgba(255,255,255,0.4)",
+  overlayBtn: "rgba(255,255,255,0.08)",
+  progressTrack: "rgba(255,255,255,0.08)",
+  dotIdle: "rgba(255,255,255,0.18)",
+};
+
+export const THEMES = { dark, oled, light, forest, espresso, synthwave, ocean, sakura };
 
 // Ordered list for rendering the theme picker (label + emoji live with the data).
 export const THEME_OPTIONS = [
   { key: "dark", name: "Dark Mode", emoji: "🌙" },
   { key: "light", name: "Light", emoji: "☀️" },
   { key: "oled", name: "OLED Black", emoji: "🖤" },
+  { key: "forest", name: "Matcha", emoji: "🌿" },
+  { key: "espresso", name: "Espresso", emoji: "☕" },
+  { key: "synthwave", name: "Synthwave", emoji: "🎆" },
+  { key: "ocean", name: "Deep Ocean", emoji: "🌊" },
+  { key: "sakura", name: "Sakura Dusk", emoji: "🌸" },
 ];
 
 // Resolve a persisted theme name to a palette, falling back to dark for any

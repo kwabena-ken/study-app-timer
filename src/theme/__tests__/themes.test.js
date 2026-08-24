@@ -3,8 +3,17 @@ import { THEMES, THEME_OPTIONS, getTheme } from "../themes";
 describe("theme palettes", () => {
   const names = Object.keys(THEMES);
 
-  it("exposes the three expected themes", () => {
-    expect(names.sort()).toEqual(["dark", "light", "oled"]);
+  it("exposes the eight expected themes", () => {
+    expect(names.sort()).toEqual([
+      "dark",
+      "espresso",
+      "forest",
+      "light",
+      "ocean",
+      "oled",
+      "sakura",
+      "synthwave",
+    ]);
   });
 
   it("gives every palette an identical set of keys", () => {
@@ -17,9 +26,14 @@ describe("theme palettes", () => {
     }
   });
 
-  it("marks dark and oled as dark, light as not", () => {
+  it("marks dark palettes as dark, light as not", () => {
     expect(THEMES.dark.isDark).toBe(true);
     expect(THEMES.oled.isDark).toBe(true);
+    expect(THEMES.forest.isDark).toBe(true);
+    expect(THEMES.espresso.isDark).toBe(true);
+    expect(THEMES.synthwave.isDark).toBe(true);
+    expect(THEMES.ocean.isDark).toBe(true);
+    expect(THEMES.sakura.isDark).toBe(true);
     expect(THEMES.light.isDark).toBe(false);
   });
 

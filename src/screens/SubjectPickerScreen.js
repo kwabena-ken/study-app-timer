@@ -12,6 +12,8 @@ import {
 } from "react-native";
 import { loadSubjects } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
+import { FONTS } from "../theme/typography";
+import Icon from "../components/Icon";
 
 /**
  * Subject picker screen — type a new subject or tap a recent one.
@@ -60,7 +62,7 @@ export default function SubjectPickerScreen({ onSelectSubject, onGoHome }) {
             accessibilityRole="button"
             accessibilityLabel="Go home"
           >
-            <Text style={styles.backBtnText}>←</Text>
+            <Icon name="chevron-left" size={22} color={theme.textSecondary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>What are you studying?</Text>
           <View style={styles.spacer} />
@@ -149,11 +151,16 @@ const makeStyles = (t) =>
     backBtn: {
       backgroundColor: t.hairline,
       borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    backBtnText: { color: t.textSecondary, fontSize: 18 },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
+    headerTitle: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
+      fontSize: 16,
+    },
     spacer: { width: 40 },
     scroll: { padding: 20, paddingTop: 20 },
     inputWrap: {
@@ -167,6 +174,7 @@ const makeStyles = (t) =>
     },
     input: {
       color: t.textPrimary,
+      fontFamily: FONTS.body,
       fontSize: 16,
       paddingVertical: 14,
     },
@@ -182,16 +190,16 @@ const makeStyles = (t) =>
     },
     nextBtnText: {
       color: t.onAccent,
+      fontFamily: FONTS.bodyBold,
       fontSize: 15,
-      fontWeight: "700",
     },
     nextBtnTextDisabled: {
       color: t.textDisabled,
     },
     sectionLabel: {
       color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 11,
-      fontWeight: "700",
       textTransform: "uppercase",
       letterSpacing: 1,
       marginBottom: 10,
@@ -214,8 +222,8 @@ const makeStyles = (t) =>
     },
     subjectName: {
       color: t.textPrimary,
+      fontFamily: FONTS.bodySemibold,
       fontSize: 15,
-      fontWeight: "600",
       flex: 1,
     },
     arrowText: {
@@ -224,6 +232,7 @@ const makeStyles = (t) =>
     },
     noMatch: {
       color: t.textMuted,
+      fontFamily: FONTS.body,
       fontSize: 13,
       textAlign: "center",
       marginTop: 12,
