@@ -1,4 +1,4 @@
-import { computeStreak, localDayKey } from "../streak";
+import { computeStreak, localDayKey, recentStudyDays } from "../streak";
 
 function isoLocal(y, m, d, h = 12) {
   return new Date(y, m - 1, d, h, 0, 0).toISOString();
@@ -117,5 +117,41 @@ describe("computeStreak", () => {
       best: 1,
       lastQualifyingDay: "2026-08-24",
     });
+  });
+});
+
+describe("recentStudyDays", () => {
+  it("returns `count` booleans, oldest first, last = today", () => {
+    const days = recentStudyDays([], 7, NOW);
+    expect(days).toHaveLength(7);
+    expect(days).toEqual([false, false, false, false, false, false, false]);
+  });
+
+  it("marks the days that had a completed session", () => {
+    const sessions = [
+      completed(2026, 8, 24), // today
+      completed(2026, 8, 22), // 2 days ago
+      completed(2026, 8, 18), // 6 days ago
+    ];
+    // indices 0..6 = Aug 18..24
+    expect(recentStudyDays(sessions, 7, NOW)).toEqual([
+      true, // 18
+      false, // 19
+      false, // 20
+      false, // 21
+      true, // 22
+      false, // 23
+      true, // 24 (today)
+    ]);
+  });
+
+  it("ignores incomplete sessions and days outside the window", () => {
+    const sessions = [
+      { completed: false, completedAt: isoLocal(2026, 8, 24) },
+      completed(2026, 8, 10), // older than 7 days
+    ];
+    expect(recentStudyDays(sessions, 7, NOW)).toEqual([
+      false, false, false, false, false, false, false,
+    ]);
   });
 });

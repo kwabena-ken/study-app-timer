@@ -87,3 +87,23 @@ export function computeStreak(sessions, now = new Date()) {
 
   return { current, best, lastQualifyingDay };
 }
+
+/**
+ * Whether each of the last `count` local calendar days had a qualifying
+ * (completed) session, ordered oldest → today. Powers the Home dashboard's
+ * 7-day dot row.
+ *
+ * @param {Array<{ completed?: boolean, completedAt?: string, startedAt?: string }>} sessions
+ * @param {number} [count]
+ * @param {Date} [now]
+ * @returns {boolean[]} length `count`, last element = today
+ */
+export function recentStudyDays(sessions, count = 7, now = new Date()) {
+  const days = qualifyingDaySet(sessions);
+  const today = startOfLocalDayMs(now);
+  const out = [];
+  for (let i = count - 1; i >= 0; i--) {
+    out.push(days.has(addLocalDaysMs(today, -i)));
+  }
+  return out;
+}
