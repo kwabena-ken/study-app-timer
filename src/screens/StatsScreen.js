@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from "react-native";
 import { loadSessions, loadSubjects } from "../utils/storage";
+import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
 
 const TABS = ["Day", "Week", "Month", "All"];
@@ -112,6 +113,8 @@ export default function StatsScreen({ onGoHome }) {
     return { subjects: sorted, totalMins, totalSessions: filtered.length };
   }, [sessions, activeTab]);
 
+  const streak = useMemo(() => computeStreak(sessions), [sessions]);
+
   return (
     <SafeAreaView style={styles.container}>
       {/* ── Header ── */}
@@ -127,6 +130,28 @@ export default function StatsScreen({ onGoHome }) {
         <Text style={styles.headerTitle}>📊 Stats</Text>
         <View style={styles.spacer} />
       </View>
+
+      {!loading && (
+        <View
+          style={styles.streakCard}
+          accessibilityRole="text"
+          accessibilityLabel={`Current streak ${streak.current} day${streak.current === 1 ? "" : "s"}. Best streak ${streak.best} day${streak.best === 1 ? "" : "s"}.`}
+        >
+          <View style={styles.streakCol}>
+            <Text style={styles.streakLabel}>Current streak</Text>
+            <Text style={styles.streakValue}>
+              {streak.current} day{streak.current !== 1 ? "s" : ""}
+            </Text>
+          </View>
+          <View style={styles.streakDivider} />
+          <View style={styles.streakCol}>
+            <Text style={styles.streakLabel}>Best streak</Text>
+            <Text style={styles.streakValue}>
+              {streak.best} day{streak.best !== 1 ? "s" : ""}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* ── Tab bar ── */}
       <View style={styles.tabRow}>
@@ -244,6 +269,40 @@ const makeStyles = (t) =>
     backBtnText: { color: t.textSecondary, fontSize: 18 },
     headerTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
     spacer: { width: 40 },
+    streakCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginHorizontal: 20,
+      marginBottom: 12,
+      backgroundColor: t.surface,
+      borderWidth: 1.5,
+      borderColor: t.border,
+      borderRadius: 14,
+      paddingVertical: 14,
+      paddingHorizontal: 8,
+    },
+    streakCol: {
+      flex: 1,
+      alignItems: "center",
+    },
+    streakDivider: {
+      width: 1,
+      alignSelf: "stretch",
+      backgroundColor: t.border,
+    },
+    streakLabel: {
+      color: t.textMuted,
+      fontSize: 11,
+      fontWeight: "600",
+      textTransform: "uppercase",
+      letterSpacing: 0.6,
+    },
+    streakValue: {
+      color: t.warning,
+      fontSize: 18,
+      fontWeight: "800",
+      marginTop: 4,
+    },
     tabRow: {
       flexDirection: "row",
       marginHorizontal: 20,

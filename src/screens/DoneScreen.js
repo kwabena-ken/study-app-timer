@@ -6,7 +6,8 @@ import {
   StyleSheet,
   SafeAreaView,
 } from "react-native";
-import { saveSession } from "../utils/storage";
+import { loadSessions, saveSession } from "../utils/storage";
+import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
 
 /**
@@ -21,6 +22,7 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
 
   const phases = session?.phases || [];
   const [saved, setSaved] = useState(false);
+  const [currentStreak, setCurrentStreak] = useState(null);
   const didSaveRef = useRef(false);
 
   // Save session to local storage (runs once on mount)
@@ -41,7 +43,11 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
       actualStudyMins: sessionMeta?.actualStudyMins != null ? sessionMeta.actualStudyMins : totalStudyMins,
       completed: true,
     })
-      .then(() => setSaved(true))
+      .then(() => loadSessions())
+      .then((sessions) => {
+        setCurrentStreak(computeStreak(sessions).current);
+        setSaved(true);
+      })
       .catch((e) => console.warn("Failed to save session:", e));
   }, [session, sessionMeta, phases]);
 
@@ -76,7 +82,24 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
         </View>
 
         {saved && (
-          <Text style={styles.savedText}>✅ Saved to history</Text>
+          <>
+            {currentStreak != null && (
+              <Text
+                style={styles.streakText}
+                accessibilityRole="text"
+                accessibilityLabel={
+                  currentStreak === 1
+                    ? "Streak started"
+                    : `That's ${currentStreak} days in a row`
+                }
+              >
+                {currentStreak === 1
+                  ? "Streak started"
+                  : `That's ${currentStreak} days in a row`}
+              </Text>
+            )}
+            <Text style={styles.savedText}>✅ Saved to history</Text>
+          </>
         )}
 
         <TouchableOpacity style={styles.homeButton} onPress={onGoHome}>
@@ -131,6 +154,12 @@ const makeStyles = (t) =>
     row: { flexDirection: "row", alignItems: "center", paddingVertical: 5 },
     check: { fontSize: 15, marginRight: 10 },
     rowText: { color: t.textTertiary, fontSize: 13 },
+    streakText: {
+      color: t.warning,
+      fontSize: 14,
+      fontWeight: "700",
+      marginBottom: 8,
+    },
     savedText: {
       color: t.success,
       fontSize: 12,
