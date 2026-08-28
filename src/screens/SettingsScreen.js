@@ -7,8 +7,19 @@ import {
   SafeAreaView,
   ScrollView,
   Switch,
+  Alert,
+  TextInput,
 } from "react-native";
-import { loadSettings, saveSettings } from "../utils/storage";
+import {
+  SUBJECT_COLORS,
+  loadSettings,
+  saveSettings,
+  loadSubjects,
+  updateSubjectColor,
+  renameSubject,
+  deleteSubject,
+  moveSubject,
+} from "../utils/storage";
 import { useAlarmSound } from "../hooks/useAlarmSound";
 import { useTheme } from "../theme/ThemeContext";
 import { THEME_OPTIONS } from "../theme/themes";
@@ -42,6 +53,14 @@ const SOUND_OPTIONS = [
   },
 ];
 
+const WEEKLY_TIME_GOALS = [300, 600, 900, 1200];
+const WEEKLY_DAY_GOALS = [3, 4, 5, 6, 7];
+
+function formatGoalHours(mins) {
+  const hours = mins / 60;
+  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+}
+
 /**
  * Settings Screen — sound selection with live audio previews, behavior toggles,
  * and live theme switching.
@@ -55,16 +74,23 @@ export default function SettingsScreen({ onGoHome }) {
     vibrate: true,
     keepAwake: true,
     theme: "dark",
+    weeklyGoalEnabled: true,
+    weeklyGoalMins: 600,
+    weeklyGoalDays: 5,
   });
   const [loading, setLoading] = useState(true);
   const [playingPreset, setPlayingPreset] = useState(null);
+  const [subjects, setSubjects] = useState([]);
+  const [editingSubject, setEditingSubject] = useState(null);
+  const [subjectName, setSubjectName] = useState("");
 
   const { playAlarm, stopAlarm } = useAlarmSound();
 
   // Load saved settings on mount
   useEffect(() => {
-    loadSettings().then((s) => {
+    Promise.all([loadSettings(), loadSubjects()]).then(([s, savedSubjects]) => {
       setSettingsState(s);
+      setSubjects(savedSubjects);
       setLoading(false);
     });
   }, []);
@@ -91,6 +117,53 @@ export default function SettingsScreen({ onGoHome }) {
     },
     [playingPreset, playAlarm, stopAlarm]
   );
+
+  const handleRenameSubject = useCallback(async () => {
+    const nextName = subjectName.trim();
+    if (!editingSubject || !nextName) return;
+    try {
+      const renamed = await renameSubject(editingSubject, nextName);
+      setSubjects((prev) =>
+        prev.map((s) =>
+          s.name === editingSubject ? { ...s, name: renamed.name } : s
+        )
+      );
+      setEditingSubject(null);
+      setSubjectName("");
+    } catch (error) {
+      Alert.alert("Could Not Rename", error.message || "Please try another name.");
+    }
+  }, [editingSubject, subjectName]);
+
+  const handleSubjectColor = useCallback(async (name, color) => {
+    await updateSubjectColor(name, color);
+    setSubjects((prev) =>
+      prev.map((s) => (s.name === name ? { ...s, color } : s))
+    );
+  }, []);
+
+  const handleMoveSubject = useCallback(async (name, direction) => {
+    const updated = await moveSubject(name, direction);
+    setSubjects(updated);
+  }, []);
+
+  const handleDeleteSubject = useCallback((name) => {
+    Alert.alert(
+      "Delete Subject?",
+      `Remove “${name}” from your subject picker? Existing session history will be kept.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await deleteSubject(name);
+            setSubjects((prev) => prev.filter((s) => s.name !== name));
+          },
+        },
+      ]
+    );
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -213,7 +286,75 @@ export default function SettingsScreen({ onGoHome }) {
               </View>
             </View>
 
-            {/* ── Section 3: App Theme ── */}
+            {/* ── Section 3: Weekly goals ── */}
+            <View style={styles.sectionCard}>
+              <View style={styles.goalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>Weekly Study Goal</Text>
+                  <Text style={styles.sectionSubtitleCompact}>
+                    Track focused time and active study days from Monday to Sunday.
+                  </Text>
+                </View>
+                <Switch
+                  value={settings.weeklyGoalEnabled}
+                  onValueChange={(value) =>
+                    updateSetting("weeklyGoalEnabled", value)
+                  }
+                  trackColor={{ false: theme.border, true: theme.accent }}
+                  thumbColor={theme.onAccent}
+                  accessibilityLabel="Weekly study goal"
+                  accessibilityState={{ checked: settings.weeklyGoalEnabled }}
+                />
+              </View>
+
+              {settings.weeklyGoalEnabled && (
+                <>
+                  <Text style={styles.goalLabel}>Focused time</Text>
+                  <View style={styles.goalPillRow}>
+                    {WEEKLY_TIME_GOALS.map((mins) => {
+                      const active = settings.weeklyGoalMins === mins;
+                      return (
+                        <TouchableOpacity
+                          key={mins}
+                          style={[styles.goalPill, active && styles.goalPillActive]}
+                          onPress={() => updateSetting("weeklyGoalMins", mins)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Set weekly focus goal to ${formatGoalHours(mins)}`}
+                          accessibilityState={{ selected: active }}
+                        >
+                          <Text style={[styles.goalPillText, active && styles.goalPillTextActive]}>
+                            {formatGoalHours(mins)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.goalLabel}>Active study days</Text>
+                  <View style={styles.goalPillRow}>
+                    {WEEKLY_DAY_GOALS.map((days) => {
+                      const active = settings.weeklyGoalDays === days;
+                      return (
+                        <TouchableOpacity
+                          key={days}
+                          style={[styles.goalPill, active && styles.goalPillActive]}
+                          onPress={() => updateSetting("weeklyGoalDays", days)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Set weekly goal to ${days} active days`}
+                          accessibilityState={{ selected: active }}
+                        >
+                          <Text style={[styles.goalPillText, active && styles.goalPillTextActive]}>
+                            {days}d
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+            </View>
+
+            {/* ── Section 4: App Theme ── */}
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>🎨 App Theme</Text>
               <Text style={styles.sectionSubtitle}>
@@ -245,6 +386,160 @@ export default function SettingsScreen({ onGoHome }) {
                   );
                 })}
               </View>
+            </View>
+
+            {/* ── Section 5: Subject management ── */}
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Subjects</Text>
+              <Text style={styles.sectionSubtitle}>
+                Rename, recolor, reorder, or remove saved subjects. Renaming also
+                updates history; deleting does not remove past sessions.
+              </Text>
+
+              {subjects.length === 0 ? (
+                <Text style={styles.subjectEmpty}>
+                  Subjects you use in a session will appear here.
+                </Text>
+              ) : (
+                subjects.map((subject, index) => {
+                  const editing = editingSubject === subject.name;
+                  return (
+                    <View key={subject.name} style={styles.subjectRow}>
+                      <View style={styles.subjectTopRow}>
+                        <View
+                          style={[
+                            styles.subjectColorDot,
+                            { backgroundColor: subject.color },
+                          ]}
+                        />
+                        {editing ? (
+                          <TextInput
+                            style={styles.subjectInput}
+                            value={subjectName}
+                            onChangeText={setSubjectName}
+                            onSubmitEditing={handleRenameSubject}
+                            autoFocus
+                            returnKeyType="done"
+                            accessibilityLabel="New subject name"
+                          />
+                        ) : (
+                          <Text style={styles.subjectName}>{subject.name}</Text>
+                        )}
+
+                        {editing ? (
+                          <>
+                            <TouchableOpacity
+                              style={styles.subjectIconBtn}
+                              onPress={handleRenameSubject}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Save ${subject.name} name`}
+                            >
+                              <Icon name="check" size={18} color={theme.success} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.subjectIconBtn}
+                              onPress={() => {
+                                setEditingSubject(null);
+                                setSubjectName("");
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel="Cancel renaming"
+                            >
+                              <Icon name="close" size={18} color={theme.textMuted} />
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <>
+                            <TouchableOpacity
+                              style={styles.subjectIconBtn}
+                              onPress={() => {
+                                setEditingSubject(subject.name);
+                                setSubjectName(subject.name);
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Rename ${subject.name}`}
+                            >
+                              <Icon name="edit" size={17} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.subjectIconBtn}
+                              onPress={() => handleDeleteSubject(subject.name)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Delete ${subject.name}`}
+                            >
+                              <Icon name="trash" size={17} color={theme.danger} />
+                            </TouchableOpacity>
+                          </>
+                        )}
+                      </View>
+
+                      {!editing && (
+                        <>
+                          <View style={styles.subjectControls}>
+                            <TouchableOpacity
+                              style={styles.orderBtn}
+                              disabled={index === 0}
+                              onPress={() => handleMoveSubject(subject.name, -1)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Move ${subject.name} up`}
+                              accessibilityState={{ disabled: index === 0 }}
+                            >
+                              <Text
+                                style={[
+                                  styles.orderBtnText,
+                                  index === 0 && styles.orderBtnTextDisabled,
+                                ]}
+                              >
+                                ↑ Up
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.orderBtn}
+                              disabled={index === subjects.length - 1}
+                              onPress={() => handleMoveSubject(subject.name, 1)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Move ${subject.name} down`}
+                              accessibilityState={{
+                                disabled: index === subjects.length - 1,
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.orderBtnText,
+                                  index === subjects.length - 1 &&
+                                    styles.orderBtnTextDisabled,
+                                ]}
+                              >
+                                ↓ Down
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={styles.colorRow}>
+                            {SUBJECT_COLORS.map((color) => (
+                              <TouchableOpacity
+                                key={color}
+                                style={[
+                                  styles.colorChoice,
+                                  { backgroundColor: color },
+                                  subject.color === color && styles.colorChoiceActive,
+                                ]}
+                                onPress={() =>
+                                  handleSubjectColor(subject.name, color)
+                                }
+                                accessibilityRole="radio"
+                                accessibilityLabel={`Set ${subject.name} color to ${color}`}
+                                accessibilityState={{
+                                  selected: subject.color === color,
+                                }}
+                              />
+                            ))}
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  );
+                })
+              )}
             </View>
           </>
         )}
@@ -286,6 +581,50 @@ const makeStyles = (t) =>
     },
     sectionTitle: { color: t.textPrimary, fontSize: 15, fontFamily: FONTS.displayMedium },
     sectionSubtitle: { color: t.textMuted, fontSize: 12, marginTop: 4, marginBottom: 14, fontFamily: FONTS.body },
+    sectionSubtitleCompact: {
+      color: t.textMuted,
+      fontSize: 12,
+      marginTop: 4,
+      paddingRight: 12,
+      fontFamily: FONTS.body,
+    },
+    goalHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    goalLabel: {
+      color: t.textSecondary,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 12,
+      marginBottom: 8,
+    },
+    goalPillRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      marginBottom: 16,
+    },
+    goalPill: {
+      minWidth: 48,
+      alignItems: "center",
+      backgroundColor: t.surfaceAlt,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 10,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+    },
+    goalPillActive: {
+      backgroundColor: t.surfaceActive,
+      borderColor: t.accent,
+    },
+    goalPillText: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 12,
+    },
+    goalPillTextActive: { color: t.accent },
     soundOptionRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -361,4 +700,89 @@ const makeStyles = (t) =>
     themePillEmoji: { fontSize: 14, marginRight: 6 },
     themePillText: { color: t.textMuted, fontSize: 12, fontFamily: FONTS.bodySemibold },
     themePillTextActive: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyBold },
+    subjectEmpty: {
+      color: t.textMuted,
+      fontFamily: FONTS.body,
+      fontSize: 12,
+      paddingVertical: 8,
+    },
+    subjectRow: {
+      backgroundColor: t.surfaceAlt,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 10,
+    },
+    subjectTopRow: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    subjectColorDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      marginRight: 10,
+    },
+    subjectName: {
+      color: t.textPrimary,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 14,
+      flex: 1,
+    },
+    subjectInput: {
+      flex: 1,
+      color: t.textPrimary,
+      fontFamily: FONTS.body,
+      fontSize: 14,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.accent,
+      borderRadius: 8,
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+    },
+    subjectIconBtn: {
+      width: 34,
+      height: 34,
+      alignItems: "center",
+      justifyContent: "center",
+      marginLeft: 4,
+    },
+    subjectControls: {
+      flexDirection: "row",
+      gap: 8,
+      marginTop: 10,
+    },
+    orderBtn: {
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+    },
+    orderBtnText: {
+      color: t.textSecondary,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 11,
+    },
+    orderBtnTextDisabled: { color: t.textDisabled },
+    colorRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 9,
+      marginTop: 12,
+    },
+    colorChoice: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: "transparent",
+    },
+    colorChoiceActive: {
+      borderColor: t.textPrimary,
+      transform: [{ scale: 1.12 }],
+    },
   });

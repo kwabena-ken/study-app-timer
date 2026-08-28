@@ -5,6 +5,10 @@ import {
   DEFAULT_SETTINGS,
   loadSubjects,
   saveSubject,
+  updateSubjectColor,
+  renameSubject,
+  deleteSubject,
+  moveSubject,
   loadSessions,
   saveSession,
   loadTemplates,
@@ -20,6 +24,9 @@ beforeEach(async () => {
 describe("settings", () => {
   it("returns defaults when nothing is stored", async () => {
     expect(await loadSettings()).toEqual(DEFAULT_SETTINGS);
+    expect(DEFAULT_SETTINGS.weeklyGoalEnabled).toBe(true);
+    expect(DEFAULT_SETTINGS.weeklyGoalMins).toBe(600);
+    expect(DEFAULT_SETTINGS.weeklyGoalDays).toBe(5);
   });
 
   it("merges saved fields over the defaults", async () => {
@@ -61,6 +68,45 @@ describe("subjects", () => {
     await Promise.all([saveSubject("Biology"), saveSubject("Chemistry")]);
     const names = (await loadSubjects()).map((s) => s.name).sort();
     expect(names).toEqual(["Biology", "Chemistry"]);
+  });
+
+  it("renames a subject and matching historical sessions", async () => {
+    await saveSubject("Biology");
+    await saveSession({
+      sessionType: "1hr",
+      label: "1-Hour Session",
+      subject: "Biology",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      phasesCompleted: 4,
+      totalStudyMins: 60,
+    });
+
+    await renameSubject("Biology", "Life Science");
+    expect((await loadSubjects())[0].name).toBe("Life Science");
+    expect((await loadSessions())[0].subject).toBe("Life Science");
+  });
+
+  it("rejects a rename that duplicates another subject", async () => {
+    await saveSubject("Biology");
+    await saveSubject("Chemistry");
+    await expect(renameSubject("Biology", "chemistry")).rejects.toThrow(
+      "already exists"
+    );
+  });
+
+  it("updates colors, reorders subjects, and deletes without changing history", async () => {
+    await saveSubject("Biology");
+    await saveSubject("Chemistry");
+    await updateSubjectColor("Biology", "#123456");
+    await moveSubject("Chemistry", -1);
+
+    let subjects = await loadSubjects();
+    expect(subjects.map((s) => s.name)).toEqual(["Chemistry", "Biology"]);
+    expect(subjects[1].color).toBe("#123456");
+
+    await deleteSubject("Biology");
+    subjects = await loadSubjects();
+    expect(subjects.map((s) => s.name)).toEqual(["Chemistry"]);
   });
 });
 

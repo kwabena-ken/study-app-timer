@@ -33,7 +33,7 @@ function withKeyLock(key, task) {
 }
 
 // ── Preset colors for auto-assigning to new subjects ──
-const SUBJECT_COLORS = [
+export const SUBJECT_COLORS = [
   "#4f8ef7", // blue
   "#4caf6e", // green
   "#b06ce0", // purple
@@ -104,6 +104,72 @@ export async function updateSubjectColor(name, color) {
       s.name.toLowerCase() === name.toLowerCase() ? { ...s, color } : s
     );
     await AsyncStorage.setItem(SUBJECTS_KEY, JSON.stringify(updated));
+  });
+}
+
+/** Rename a subject and update matching historical session records. */
+export async function renameSubject(currentName, nextName) {
+  const trimmed = nextName.trim();
+  if (!trimmed) throw new Error("Subject name cannot be empty");
+
+  const renamed = await withKeyLock(SUBJECTS_KEY, async () => {
+    const subjects = await loadSubjects();
+    const currentIndex = subjects.findIndex(
+      (s) => s.name.toLowerCase() === currentName.toLowerCase()
+    );
+    if (currentIndex < 0) throw new Error("Subject not found");
+
+    const duplicate = subjects.some(
+      (s, index) =>
+        index !== currentIndex && s.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (duplicate) throw new Error("A subject with that name already exists");
+
+    const updatedSubject = { ...subjects[currentIndex], name: trimmed };
+    const updated = [...subjects];
+    updated[currentIndex] = updatedSubject;
+    await AsyncStorage.setItem(SUBJECTS_KEY, JSON.stringify(updated));
+    return updatedSubject;
+  });
+
+  await withKeyLock(STORAGE_KEY, async () => {
+    const sessions = await loadSessions();
+    const updated = sessions.map((s) =>
+      (s.subject || "").toLowerCase() === currentName.toLowerCase()
+        ? { ...s, subject: trimmed }
+        : s
+    );
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  });
+
+  return renamed;
+}
+
+/** Delete a saved subject without altering historical session records. */
+export async function deleteSubject(name) {
+  return withKeyLock(SUBJECTS_KEY, async () => {
+    const subjects = await loadSubjects();
+    const updated = subjects.filter(
+      (s) => s.name.toLowerCase() !== name.toLowerCase()
+    );
+    await AsyncStorage.setItem(SUBJECTS_KEY, JSON.stringify(updated));
+  });
+}
+
+/** Move a subject one position in the saved picker order. */
+export async function moveSubject(name, direction) {
+  return withKeyLock(SUBJECTS_KEY, async () => {
+    const subjects = await loadSubjects();
+    const from = subjects.findIndex(
+      (s) => s.name.toLowerCase() === name.toLowerCase()
+    );
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= subjects.length) return subjects;
+
+    const updated = [...subjects];
+    [updated[from], updated[to]] = [updated[to], updated[from]];
+    await AsyncStorage.setItem(SUBJECTS_KEY, JSON.stringify(updated));
+    return updated;
   });
 }
 
@@ -283,6 +349,9 @@ export const DEFAULT_SETTINGS = {
   keepAwake: true,
   autoAdvance: true,
   theme: "dark",
+  weeklyGoalEnabled: true,
+  weeklyGoalMins: 600,
+  weeklyGoalDays: 5,
 };
 
 /**

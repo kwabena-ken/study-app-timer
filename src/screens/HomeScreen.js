@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -6,14 +6,26 @@ import {
   StyleSheet,
   SafeAreaView,
   ScrollView,
+  RefreshControl,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "../components/Icon";
-import { loadSessions } from "../utils/storage";
+import WeeklyGoalCard from "../components/WeeklyGoalCard";
+import { loadSessions, loadSettings } from "../utils/storage";
 import { computeStreak, recentStudyDays } from "../utils/streak";
 
 const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
+
+/** Darken a #rrggbb color by a factor (0–1). Used for gradient stops. */
+function shade(hex, factor) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.round(v * factor)
+    .toString(16)
+    .padStart(2, "0");
+  return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`;
+}
 
 /** Round a minute count to "Xm" / "Xh" / "Xh Ym". */
 function formatMins(mins) {
@@ -28,6 +40,15 @@ function greeting(hour) {
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";
+}
+
+/** "Monday, 24 August" style date line for the home header. */
+function longDate(date) {
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 }
 
 const QUICK_STARTS = [
@@ -53,12 +74,30 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [sessions, setSessions] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const refreshSessions = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    try {
+      const [savedSessions, savedSettings] = await Promise.all([
+        loadSessions(),
+        loadSettings(),
+      ]);
+      setSessions(savedSessions);
+      setSettings(savedSettings);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    loadSessions()
-      .then(setSessions)
-      .catch(() => setSessions([]));
-  }, []);
+    refreshSessions();
+  }, [refreshSessions]);
 
   const now = useMemo(() => new Date(), []);
   const list = sessions || [];
@@ -108,10 +147,32 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => refreshSessions(true)}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+          />
+        }
       >
+        {loadError && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>Could not load your study data.</Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => refreshSessions()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading study data"
+            >
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── Greeting ── */}
-        <Text style={styles.eyebrow}>STUDY TIMER</Text>
-        <Text style={styles.greeting}>{greeting(now.getHours())}</Text>
+        <Text style={styles.greeting}>{greeting(now.getHours())} 👋</Text>
+        <Text style={styles.dateLine}>{longDate(now)}</Text>
 
         {/* ── Streak card (signature) ── */}
         <View
@@ -123,37 +184,65 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
               : "No active streak. Study today to start one."
           }
         >
-          <View style={styles.streakTop}>
-            <View style={styles.flameWrap}>
-              <Icon name="flame" size={26} color={theme.warning} />
-            </View>
-            <View style={styles.streakNums}>
-              <View style={styles.streakValueRow}>
-                <Text style={styles.streakValue}>{streak.current}</Text>
-                <Text style={styles.streakUnit}>
-                  {hasStreak ? "day streak" : "days — start today"}
-                </Text>
+          {/* Diagonal sheen (dark themes only) + warm glow bleeding from the corner */}
+          {theme.isDark && (
+            <LinearGradient
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              colors={["rgba(255,255,255,0.05)", "rgba(255,255,255,0)"]}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+          )}
+          <View style={styles.streakGlow} pointerEvents="none" />
+          <View>
+            <View style={styles.streakTop}>
+              <View style={styles.flameWrap}>
+                <Icon name="flame" size={26} color={theme.warning} />
               </View>
-              <Text style={styles.streakBest}>Best {streak.best}</Text>
+              <View style={styles.streakNums}>
+                <View style={styles.streakValueRow}>
+                  <Text style={styles.streakValue}>{streak.current}</Text>
+                  <Text style={styles.streakUnit}>
+                    {hasStreak ? "day streak" : "days — start today"}
+                  </Text>
+                </View>
+                <Text style={styles.streakBest}>Best streak · {streak.best} days</Text>
+              </View>
             </View>
-          </View>
 
-          {/* 7-day dot row */}
-          <View style={styles.week}>
-            {week.map((on, i) => (
-              <View key={i} style={styles.weekCol}>
-                <View
-                  style={[
-                    styles.dot,
-                    on ? styles.dotOn : styles.dotOff,
-                    i === week.length - 1 && styles.dotToday,
-                  ]}
-                />
-                <Text style={styles.weekLetter}>{dayLabels[i]}</Text>
-              </View>
-            ))}
+            {/* 7-day marker row */}
+            <View style={styles.week}>
+              {week.map((on, i) => (
+                <View key={i} style={styles.weekCol}>
+                  {on ? (
+                    <LinearGradient
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      colors={[theme.warning, shade(theme.warning, 0.72)]}
+                      style={[
+                        styles.dayMarker,
+                        styles.dayMarkerOn,
+                        i === week.length - 1 && styles.dayMarkerToday,
+                      ]}
+                    />
+                  ) : (
+                    <View
+                      style={[
+                        styles.dayMarker,
+                        styles.dayMarkerOff,
+                        i === week.length - 1 && styles.dayMarkerToday,
+                      ]}
+                    />
+                  )}
+                  <Text style={styles.weekLetter}>{dayLabels[i]}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         </View>
+
+        <WeeklyGoalCard sessions={list} settings={settings} now={now} />
 
         {/* ── Primary CTA ── */}
         <TouchableOpacity
@@ -166,6 +255,22 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
           <Icon name="play" size={20} color={theme.onAccent} />
           <Text style={styles.ctaText}>Start a session</Text>
         </TouchableOpacity>
+
+        {/* ── Focus recap ── */}
+        <View style={styles.statRow}>
+          <View style={styles.statTile}>
+            <Text style={styles.statValue}>{formatMins(recap.todayMins)}</Text>
+            <Text style={styles.statLabel}>Today</Text>
+          </View>
+          <View style={styles.statTile}>
+            <Text style={styles.statValue}>{formatMins(recap.weekMins)}</Text>
+            <Text style={styles.statLabel}>This week</Text>
+          </View>
+          <View style={styles.statTile}>
+            <Text style={styles.statValue}>{recap.weekSessions}</Text>
+            <Text style={styles.statLabel}>Sessions</Text>
+          </View>
+        </View>
 
         {/* ── Quick start ── */}
         <Text style={styles.sectionLabel}>Quick start</Text>
@@ -184,22 +289,6 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
             </TouchableOpacity>
           ))}
         </View>
-
-        {/* ── Focus recap ── */}
-        <View style={styles.statRow}>
-          <View style={styles.statTile}>
-            <Text style={styles.statValue}>{formatMins(recap.todayMins)}</Text>
-            <Text style={styles.statLabel}>Today</Text>
-          </View>
-          <View style={styles.statTile}>
-            <Text style={styles.statValue}>{formatMins(recap.weekMins)}</Text>
-            <Text style={styles.statLabel}>This week</Text>
-          </View>
-          <View style={styles.statTile}>
-            <Text style={styles.statValue}>{recap.weekSessions}</Text>
-            <Text style={styles.statLabel}>Sessions</Text>
-          </View>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -210,17 +299,16 @@ const makeStyles = (t) =>
     container: { flex: 1, backgroundColor: t.bg },
     scroll: { padding: 20, paddingTop: 16, paddingBottom: 28 },
 
-    eyebrow: {
-      color: t.textMuted,
-      fontFamily: FONTS.bodySemibold,
-      fontSize: 11,
-      letterSpacing: 2,
-    },
     greeting: {
       color: t.textPrimary,
       fontFamily: FONTS.displayBold,
       fontSize: 28,
-      marginTop: 4,
+      marginBottom: 2,
+    },
+    dateLine: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 13,
       marginBottom: 20,
     },
 
@@ -232,6 +320,18 @@ const makeStyles = (t) =>
       borderRadius: 20,
       padding: 20,
       marginBottom: 18,
+      overflow: "hidden",
+    },
+    // Fake radial warm glow bleeding from the top-right corner.
+    streakGlow: {
+      position: "absolute",
+      right: -50,
+      top: -50,
+      width: 150,
+      height: 150,
+      borderRadius: 75,
+      backgroundColor: t.warning,
+      opacity: t.isDark ? 0.16 : 0.08,
     },
     streakTop: {
       flexDirection: "row",
@@ -245,6 +345,11 @@ const makeStyles = (t) =>
       alignItems: "center",
       justifyContent: "center",
       marginRight: 14,
+      shadowColor: t.warning,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: t.isDark ? 0.5 : 0.25,
+      shadowRadius: 10,
+      elevation: 4,
     },
     streakNums: { flex: 1 },
     streakValueRow: {
@@ -275,20 +380,28 @@ const makeStyles = (t) =>
       marginTop: 20,
     },
     weekCol: { alignItems: "center", flex: 1 },
-    dot: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
+    // 20px rounded-square day markers (redesign spec)
+    dayMarker: {
+      width: 20,
+      height: 20,
+      borderRadius: 7,
       marginBottom: 6,
     },
-    dotOn: { backgroundColor: t.warning },
-    dotOff: { backgroundColor: t.dotIdle },
-    dotToday: {
+    dayMarkerOn: {
+      shadowColor: t.warning,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: t.isDark ? 0.45 : 0.25,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    dayMarkerOff: {
+      backgroundColor: t.isDark ? "rgba(255,255,255,0.06)" : t.surfaceAlt,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    dayMarkerToday: {
       borderWidth: 2,
       borderColor: t.accent,
-      width: 14,
-      height: 14,
-      borderRadius: 7,
     },
     weekLetter: {
       color: t.textMuted,
@@ -305,7 +418,12 @@ const makeStyles = (t) =>
       backgroundColor: t.accent,
       borderRadius: 16,
       paddingVertical: 17,
-      marginBottom: 22,
+      marginBottom: 18,
+      shadowColor: t.accent,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: t.isDark ? 0.38 : 0.22,
+      shadowRadius: 20,
+      elevation: 8,
     },
     ctaText: {
       color: t.onAccent,
@@ -351,6 +469,7 @@ const makeStyles = (t) =>
     statRow: {
       flexDirection: "row",
       gap: 10,
+      marginBottom: 22,
     },
     statTile: {
       flex: 1,
@@ -371,5 +490,35 @@ const makeStyles = (t) =>
       fontFamily: FONTS.bodyMedium,
       fontSize: 11,
       marginTop: 4,
+    },
+    errorBox: {
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.danger,
+      borderRadius: 14,
+      padding: 14,
+      marginBottom: 16,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    errorText: {
+      color: t.textSecondary,
+      fontFamily: FONTS.body,
+      fontSize: 12,
+      flex: 1,
+    },
+    retryBtn: {
+      borderWidth: 1,
+      borderColor: t.accent,
+      borderRadius: 999,
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+    },
+    retryText: {
+      color: t.accent,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 12,
     },
   });
