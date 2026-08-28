@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   TextInput,
+  RefreshControl,
 } from "react-native";
 import {
   loadSessions,
@@ -19,15 +20,6 @@ import {
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "../components/Icon";
-
-/**
- * Simple hook that runs a callback every time the component mounts.
- * Mimics React Navigation's useFocusEffect for our manual routing.
- */
-function useOnMount(callback) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  React.useEffect(callback, []);
-}
 
 /**
  * Groups an array of session records by day label.
@@ -96,19 +88,36 @@ export default function HistoryScreen({ onGoHome }) {
   const [sessions, setSessions] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
+  const [query, setQuery] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [rangeFilter, setRangeFilter] = useState("All time");
 
-  // Load sessions + subjects on mount
-  useOnMount(() => {
-    Promise.all([loadSessions(), loadSubjects()])
-      .then(([sessData, subData]) => {
-        setSessions(sessData);
-        setSubjects(subData);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  });
+  const refreshHistory = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    try {
+      const [sessData, subData] = await Promise.all([
+        loadSessions(),
+        loadSubjects(),
+      ]);
+      setSessions(sessData);
+      setSubjects(subData);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   // Build a map of subject name (lowercase) → color
   const subjectColorMap = useMemo(() => {
@@ -183,7 +192,39 @@ export default function HistoryScreen({ onGoHome }) {
     );
   }, []);
 
-  const groups = groupByDay(sessions);
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const now = Date.now();
+    const rangeMs =
+      rangeFilter === "7 days"
+        ? 7 * 24 * 60 * 60 * 1000
+        : rangeFilter === "30 days"
+        ? 30 * 24 * 60 * 60 * 1000
+        : null;
+
+    return sessions.filter((session) => {
+      const subject = session.subject || "No subject";
+      const searchable = `${subject} ${session.label || ""}`.toLowerCase();
+      const date = new Date(session.completedAt || session.startedAt).getTime();
+
+      if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
+      if (subjectFilter !== "All" && subject !== subjectFilter) return false;
+      if (statusFilter === "Completed" && session.completed === false) return false;
+      if (statusFilter === "Left early" && session.completed !== false) return false;
+      if (rangeMs != null && (Number.isNaN(date) || now - date > rangeMs)) return false;
+      return true;
+    });
+  }, [sessions, query, subjectFilter, statusFilter, rangeFilter]);
+
+  const groups = groupByDay(filteredSessions);
+  const hasFilters =
+    query.trim() || subjectFilter !== "All" || statusFilter !== "All" || rangeFilter !== "All time";
+  const clearFilters = useCallback(() => {
+    setQuery("");
+    setSubjectFilter("All");
+    setStatusFilter("All");
+    setRangeFilter("All time");
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -193,16 +234,137 @@ export default function HistoryScreen({ onGoHome }) {
         <Text style={styles.title}>Your sessions</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <View style={styles.filterPanel}>
+        <TextInput
+          style={styles.searchInput}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search sessions or subjects"
+          placeholderTextColor={theme.textDisabled}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+          accessibilityLabel="Search sessions or subjects"
+        />
+
+        <Text style={styles.filterLabel}>Subject</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {["All", ...subjects.map((subject) => subject.name)].map((subject) => (
+            <TouchableOpacity
+              key={subject}
+              style={[styles.filterChip, subjectFilter === subject && styles.filterChipActive]}
+              onPress={() => setSubjectFilter(subject)}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter by ${subject}`}
+              accessibilityState={{ selected: subjectFilter === subject }}
+            >
+              <Text style={[styles.filterChipText, subjectFilter === subject && styles.filterChipTextActive]}>
+                {subject}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <View style={styles.filterLine}>
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterLabel}>Status</Text>
+            <View style={styles.filterRow}>
+              {["All", "Completed", "Left early"].map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  style={[styles.filterChip, statusFilter === status && styles.filterChipActive]}
+                  onPress={() => setStatusFilter(status)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show ${status} sessions`}
+                  accessibilityState={{ selected: statusFilter === status }}
+                >
+                  <Text style={[styles.filterChipText, statusFilter === status && styles.filterChipTextActive]}>
+                    {status}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterLabel}>Date</Text>
+            <View style={styles.filterRow}>
+              {["All time", "7 days", "30 days"].map((range) => (
+                <TouchableOpacity
+                  key={range}
+                  style={[styles.filterChip, rangeFilter === range && styles.filterChipActive]}
+                  onPress={() => setRangeFilter(range)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show sessions from ${range}`}
+                  accessibilityState={{ selected: rangeFilter === range }}
+                >
+                  <Text style={[styles.filterChipText, rangeFilter === range && styles.filterChipTextActive]}>
+                    {range}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.filterSummary}>
+          <Text style={styles.resultCount}>
+            {filteredSessions.length} session{filteredSessions.length === 1 ? "" : "s"}
+          </Text>
+          {hasFilters ? (
+            <TouchableOpacity onPress={clearFilters} accessibilityRole="button" accessibilityLabel="Clear history filters">
+              <Text style={styles.clearFiltersText}>Clear filters</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => refreshHistory(true)}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+          />
+        }
+      >
         {loading && <Text style={styles.emptyText}>Loading...</Text>}
 
-        {!loading && sessions.length === 0 && (
+        {!loading && loadError && (
+          <View style={styles.errorWrap}>
+            <Icon name="close" size={24} color={theme.danger} />
+            <Text style={styles.errorTitle}>Could not load history</Text>
+            <Text style={styles.emptyText}>
+              Check your device storage and try again.
+            </Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => refreshHistory()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading history"
+            >
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!loading && !loadError && filteredSessions.length === 0 && !hasFilters && (
           <View style={styles.emptyWrap}>
             <Text style={styles.emptyEmoji}>📭</Text>
             <Text style={styles.emptyTitle}>No sessions yet</Text>
             <Text style={styles.emptyText}>
               Complete a study session to see it here!
             </Text>
+          </View>
+        )}
+
+        {!loading && !loadError && filteredSessions.length === 0 && hasFilters && (
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyTitle}>No matching sessions</Text>
+            <Text style={styles.emptyText}>Try changing your search or filters.</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={clearFilters} accessibilityRole="button" accessibilityLabel="Clear history filters">
+              <Text style={styles.retryText}>Clear filters</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -329,6 +491,76 @@ const makeStyles = (t) =>
       fontSize: 28,
       marginTop: 4,
     },
+    filterPanel: {
+      paddingHorizontal: 20,
+      paddingTop: 10,
+      paddingBottom: 4,
+    },
+    searchInput: {
+      color: t.textPrimary,
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      fontFamily: FONTS.body,
+      fontSize: 13,
+    },
+    filterLine: {
+      flexDirection: "row",
+      gap: 12,
+    },
+    filterGroup: { flex: 1 },
+    filterLabel: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 10,
+      textTransform: "uppercase",
+      letterSpacing: 1,
+      marginTop: 12,
+      marginBottom: 7,
+    },
+    filterRow: {
+      flexDirection: "row",
+      gap: 7,
+      alignItems: "center",
+    },
+    filterChip: {
+      backgroundColor: t.surfaceAlt,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 999,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+    },
+    filterChipActive: {
+      backgroundColor: t.surfaceActive,
+      borderColor: t.accent,
+    },
+    filterChipText: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 11,
+    },
+    filterChipTextActive: { color: t.accent },
+    filterSummary: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginTop: 12,
+      marginBottom: 4,
+    },
+    resultCount: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 11,
+    },
+    clearFiltersText: {
+      color: t.accent,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 11,
+    },
     scroll: { padding: 20, paddingTop: 12 },
     emptyWrap: { alignItems: "center", marginTop: 80 },
     emptyEmoji: { fontSize: 48, marginBottom: 12 },
@@ -344,6 +576,35 @@ const makeStyles = (t) =>
       fontSize: 13,
       textAlign: "center",
       maxWidth: 220,
+    },
+    errorWrap: {
+      alignItems: "center",
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 18,
+      paddingVertical: 28,
+      paddingHorizontal: 22,
+      marginTop: 24,
+    },
+    errorTitle: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
+      fontSize: 17,
+      marginTop: 10,
+      marginBottom: 6,
+    },
+    retryBtn: {
+      backgroundColor: t.accent,
+      borderRadius: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      marginTop: 16,
+    },
+    retryText: {
+      color: t.onAccent,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 13,
     },
     dayGroup: { marginBottom: 20 },
     dayLabel: {

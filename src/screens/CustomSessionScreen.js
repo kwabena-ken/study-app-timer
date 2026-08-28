@@ -70,10 +70,12 @@ export default function CustomSessionScreen({
     return Math.max(0, totalMins - allocatedMins);
   }, [totalMins, allocatedMins]);
 
+  const allocationComplete = allocatedMins === totalMins;
+
   // Handle changing total session duration
   const handleSetTotalMins = useCallback(
     (mins) => {
-      const validMins = Math.max(1, Math.min(480, mins || 1));
+      const validMins = Math.max(tasks.length, Math.min(480, mins || 1));
       setTotalMins(validMins);
       setCustomTotalInput(String(validMins));
 
@@ -95,7 +97,7 @@ export default function CustomSessionScreen({
         });
       });
     },
-    []
+    [tasks.length]
   );
 
   // Add a task (preset or custom)
@@ -122,21 +124,25 @@ export default function CustomSessionScreen({
           ];
         }
 
-        // Available space or default 5 mins
-        const available = Math.max(0, totalMins - prev.reduce((s, t) => s + t.duration, 0));
-        const newDuration = available > 0 ? available : 5;
-
-        // If no available space, reduce the last task's time to make room for new task
+        // New tasks consume unassigned time. If the session is already full,
+        // carve one minute from the latest phase that can spare it.
+        const available = totalMins - prev.reduce((s, t) => s + t.duration, 0);
         let updatedPrev = [...prev];
-        if (available <= 0 && updatedPrev.length > 0) {
-          const lastIndex = updatedPrev.length - 1;
-          const lastTask = updatedPrev[lastIndex];
-          if (lastTask.duration > newDuration) {
-            updatedPrev[lastIndex] = {
-              ...lastTask,
-              duration: lastTask.duration - newDuration,
-            };
+        let newDuration = available;
+        if (available <= 0) {
+          let donorIndex = -1;
+          for (let i = updatedPrev.length - 1; i >= 0; i--) {
+            if (updatedPrev[i].duration > 1) {
+              donorIndex = i;
+              break;
+            }
           }
+          if (donorIndex < 0) return prev;
+          updatedPrev[donorIndex] = {
+            ...updatedPrev[donorIndex],
+            duration: updatedPrev[donorIndex].duration - 1,
+          };
+          newDuration = 1;
         }
 
         return [
@@ -185,6 +191,14 @@ export default function CustomSessionScreen({
     [totalMins]
   );
 
+  // Put any unassigned minutes on the final task so the session can start
+  // without making the user adjust several sliders manually.
+  const handleDistributeRemaining = useCallback(() => {
+    if (remainingMins <= 0 || tasks.length === 0) return;
+    const lastTask = tasks[tasks.length - 1];
+    handleTaskDurationChange(lastTask.id, lastTask.duration + remainingMins);
+  }, [remainingMins, tasks, handleTaskDurationChange]);
+
   // Build the phase list from the current tasks (shared by Start and Save).
   const buildPhases = useCallback(
     () =>
@@ -205,16 +219,34 @@ export default function CustomSessionScreen({
       return;
     }
 
+    if (!allocationComplete) {
+      Alert.alert(
+        "Time Still Unassigned",
+        `Assign all ${remainingMins} remaining minute${remainingMins === 1 ? "" : "s"} before starting.`,
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
     onStartCustomSession({
       label: `Custom Session (${totalMins}m)`,
       phases: buildPhases(),
     });
-  }, [tasks, totalMins, buildPhases, onStartCustomSession]);
+  }, [tasks, totalMins, allocationComplete, remainingMins, buildPhases, onStartCustomSession]);
 
   // Save the built session as a reusable template
   const handleSaveTemplate = useCallback(async () => {
     if (tasks.length === 0) {
       Alert.alert("Nothing to Save", "Add at least one study task or break before saving a template.");
+      return;
+    }
+
+    if (!allocationComplete) {
+      Alert.alert(
+        "Time Still Unassigned",
+        "Assign all session minutes before saving this template.",
+        [{ text: "OK" }]
+      );
       return;
     }
 
@@ -228,7 +260,7 @@ export default function CustomSessionScreen({
     } catch (e) {
       Alert.alert("Save Failed", "Could not save the template. Please try again.");
     }
-  }, [tasks, templateName, totalMins, buildPhases]);
+  }, [tasks, templateName, totalMins, allocationComplete, buildPhases]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -378,8 +410,26 @@ export default function CustomSessionScreen({
           </View>
 
           {remainingMins > 0 && (
-            <Text style={styles.remainingHint}>
-              💡 You have {remainingMins}m remaining to assign.
+            <View style={styles.remainingRow}>
+              <Text style={styles.remainingHint}>
+                You have {remainingMins}m remaining to assign.
+              </Text>
+              {tasks.length > 0 && (
+                <TouchableOpacity
+                  style={styles.distributeBtn}
+                  onPress={handleDistributeRemaining}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Assign remaining ${remainingMins} minutes`}
+                >
+                  <Text style={styles.distributeText}>Assign to last</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {allocatedMins > totalMins && (
+            <Text style={styles.overAllocatedHint}>
+              Reduce a task by {allocatedMins - totalMins} minute{allocatedMins - totalMins === 1 ? "" : "s"}.
             </Text>
           )}
 
@@ -451,9 +501,13 @@ export default function CustomSessionScreen({
             onChangeText={setTemplateName}
           />
           <TouchableOpacity
-            style={[styles.saveTemplateBtn, tasks.length === 0 && styles.saveTemplateBtnDisabled]}
+            style={[
+              styles.saveTemplateBtn,
+              (tasks.length === 0 || !allocationComplete) &&
+                styles.saveTemplateBtnDisabled,
+            ]}
             onPress={handleSaveTemplate}
-            disabled={tasks.length === 0}
+            disabled={tasks.length === 0 || !allocationComplete}
             accessibilityRole="button"
             accessibilityLabel="Save as template"
           >
@@ -464,9 +518,18 @@ export default function CustomSessionScreen({
 
         {/* ── Start Button ── */}
         <TouchableOpacity
-          style={[styles.startBtn, tasks.length === 0 && styles.startBtnDisabled]}
+          style={[
+            styles.startBtn,
+            (tasks.length === 0 || !allocationComplete) && styles.startBtnDisabled,
+          ]}
           onPress={handleStart}
-          disabled={tasks.length === 0}
+          disabled={tasks.length === 0 || !allocationComplete}
+          accessibilityRole="button"
+          accessibilityLabel={
+            allocationComplete
+              ? `Start custom session for ${totalMins} minutes`
+              : "Assign all session minutes before starting"
+          }
         >
           <Icon name="play" size={20} color={theme.onAccent} />
           <Text style={styles.startBtnText}>Start Custom Session ({totalMins}m)</Text>
@@ -616,7 +679,23 @@ const makeStyles = (t) =>
     allocationSummary: { fontSize: 13, fontFamily: FONTS.displayBold },
     allocPerfect: { color: t.success },
     allocWarn: { color: t.warning },
-    remainingHint: { color: t.accent, fontSize: 12, marginBottom: 10 },
+    remainingRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 10,
+      gap: 8,
+    },
+    remainingHint: { color: t.accent, fontSize: 12, flex: 1 },
+    distributeBtn: {
+      borderWidth: 1,
+      borderColor: t.accent,
+      borderRadius: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 9,
+    },
+    distributeText: { color: t.accent, fontSize: 11, fontFamily: FONTS.bodySemibold },
+    overAllocatedHint: { color: t.danger, fontSize: 12, marginBottom: 10 },
     emptyTasksText: { color: t.textMuted, fontSize: 13, fontStyle: "italic", textAlign: "center", marginVertical: 12 },
     taskItem: {
       backgroundColor: t.surfaceAlt,

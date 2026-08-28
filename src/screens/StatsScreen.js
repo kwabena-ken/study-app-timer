@@ -6,12 +6,15 @@ import {
   StyleSheet,
   SafeAreaView,
   ScrollView,
+  RefreshControl,
 } from "react-native";
-import { loadSessions, loadSubjects } from "../utils/storage";
+import { LinearGradient } from "expo-linear-gradient";
+import { loadSessions, loadSubjects, loadSettings } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "../components/Icon";
+import WeeklyGoalCard from "../components/WeeklyGoalCard";
 
 const TABS = ["Day", "Week", "Month", "All"];
 const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -56,6 +59,15 @@ function formatDuration(mins) {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+/** Darken a #rrggbb color by a factor (0–1). Used for gradient stops. */
+function shade(hex, factor) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.round(v * factor)
+    .toString(16)
+    .padStart(2, "0");
+  return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`;
+}
+
 /**
  * Focus minutes for each of the last 7 local days, oldest → today.
  * Each entry: { mins, label (weekday initial), isToday }.
@@ -95,18 +107,35 @@ export default function StatsScreen() {
 
   const [sessions, setSessions] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [activeTab, setActiveTab] = useState("Week");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const refreshStats = React.useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    try {
+      const [sessData, subData, savedSettings] = await Promise.all([
+        loadSessions(),
+        loadSubjects(),
+        loadSettings(),
+      ]);
+      setSessions(sessData);
+      setSubjects(subData);
+      setSettings(savedSettings);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    Promise.all([loadSessions(), loadSubjects()])
-      .then(([sessData, subData]) => {
-        setSessions(sessData);
-        setSubjects(subData);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+    refreshStats();
+  }, [refreshStats]);
 
   const now = useMemo(() => new Date(), []);
 
@@ -130,6 +159,17 @@ export default function StatsScreen() {
   );
 
   const streak = useMemo(() => computeStreak(sessions, now), [sessions, now]);
+
+  // Lifetime figures for the totals trio.
+  const lifetime = useMemo(() => {
+    let mins = 0;
+    for (const s of sessions) mins += sessionMins(s);
+    return {
+      totalMins: mins,
+      count: sessions.length,
+      avgMins: sessions.length ? mins / sessions.length : 0,
+    };
+  }, [sessions]);
 
   // Per-subject breakdown + totals for the active range.
   const stats = useMemo(() => {
@@ -161,17 +201,43 @@ export default function StatsScreen() {
     <SafeAreaView style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>INSIGHTS</Text>
-        <Text style={styles.title}>Your focus</Text>
+        <Text style={styles.eyebrow}>STATS</Text>
+        <Text style={styles.title}>Insights</Text>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => refreshStats(true)}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+          />
+        }
       >
         {loading && <Text style={styles.muted}>Loading…</Text>}
 
-        {!loading && !hasAny && (
+        {!loading && loadError && (
+          <View style={styles.errorCard}>
+            <Icon name="close" size={24} color={theme.danger} />
+            <Text style={styles.errorTitle}>Could not load insights</Text>
+            <Text style={styles.muted}>
+              Check your device storage and try again.
+            </Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => refreshStats()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading insights"
+            >
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!loading && !loadError && !hasAny && (
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
               <Icon name="chart" size={26} color={theme.accent} />
@@ -215,17 +281,20 @@ export default function StatsScreen() {
                   return (
                     <View key={i} style={styles.barCol}>
                       <View style={styles.barTrack}>
-                        <View
-                          style={[
-                            styles.bar,
-                            { height: h },
-                            d.mins <= 0
-                              ? styles.barEmpty
-                              : d.isToday
-                              ? styles.barToday
-                              : styles.barPast,
-                          ]}
-                        />
+                        {d.mins <= 0 ? (
+                          <View style={[styles.bar, { height: h }, styles.barEmpty]} />
+                        ) : (
+                          <LinearGradient
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 0, y: 1 }}
+                            colors={[theme.accent, shade(theme.accent, 0.62)]}
+                            style={[
+                              styles.bar,
+                              { height: h },
+                              !d.isToday && styles.barPast,
+                            ]}
+                          />
+                        )}
                       </View>
                       <Text
                         style={[
@@ -240,6 +309,8 @@ export default function StatsScreen() {
                 })}
               </View>
             </View>
+
+            <WeeklyGoalCard sessions={sessions} settings={settings} now={now} />
 
             {/* ── Streak tiles ── */}
             <View style={styles.tileRow}>
@@ -335,6 +406,22 @@ export default function StatsScreen() {
                 );
               })
             )}
+
+            {/* ── Lifetime totals ── */}
+            <View style={styles.totRow}>
+              <View style={styles.tot}>
+                <Text style={styles.totN}>{formatDuration(lifetime.totalMins)}</Text>
+                <Text style={styles.totL}>All time</Text>
+              </View>
+              <View style={styles.tot}>
+                <Text style={styles.totN}>{lifetime.count}</Text>
+                <Text style={styles.totL}>Sessions</Text>
+              </View>
+              <View style={styles.tot}>
+                <Text style={styles.totN}>{formatDuration(lifetime.avgMins)}</Text>
+                <Text style={styles.totL}>Avg</Text>
+              </View>
+            </View>
           </>
         )}
       </ScrollView>
@@ -397,6 +484,35 @@ const makeStyles = (t) =>
       fontSize: 17,
       marginBottom: 6,
     },
+    errorCard: {
+      alignItems: "center",
+      backgroundColor: t.surface,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 20,
+      paddingVertical: 28,
+      paddingHorizontal: 24,
+      marginTop: 24,
+    },
+    errorTitle: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayMedium,
+      fontSize: 17,
+      marginTop: 10,
+      marginBottom: 6,
+    },
+    retryBtn: {
+      backgroundColor: t.accent,
+      borderRadius: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      marginTop: 16,
+    },
+    retryText: {
+      color: t.onAccent,
+      fontFamily: FONTS.bodySemibold,
+      fontSize: 13,
+    },
 
     // Chart card (signature)
     chartCard: {
@@ -449,8 +565,7 @@ const makeStyles = (t) =>
       width: 22,
       borderRadius: 7,
     },
-    barToday: { backgroundColor: t.accent },
-    barPast: { backgroundColor: t.accent, opacity: 0.32 },
+    barPast: { opacity: 0.38 },
     barEmpty: { backgroundColor: t.dotIdle },
     barLabel: {
       color: t.textMuted,
@@ -592,5 +707,33 @@ const makeStyles = (t) =>
       color: t.textMuted,
       fontFamily: FONTS.body,
       fontSize: 11,
+    },
+
+    // Lifetime totals trio
+    totRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 12,
+    },
+    tot: {
+      flex: 1,
+      backgroundColor: t.surfaceAlt,
+      borderWidth: 1,
+      borderColor: t.border,
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: "center",
+    },
+    totN: {
+      color: t.textPrimary,
+      fontFamily: FONTS.displayBold,
+      fontSize: 20,
+      fontVariant: ["tabular-nums"],
+    },
+    totL: {
+      color: t.textMuted,
+      fontFamily: FONTS.bodyMedium,
+      fontSize: 11,
+      marginTop: 4,
     },
   });

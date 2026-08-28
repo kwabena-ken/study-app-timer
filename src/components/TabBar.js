@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { BlurView } from "expo-blur";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "./Icon";
@@ -23,20 +24,27 @@ export default function TabBar({ active, onChange }) {
 
   return (
     <View style={styles.bar}>
-      {TABS.map((t) => {
-        const on = active === t.key;
+      {/* Translucent blur underlay; tabs render above it */}
+      <BlurView
+        intensity={theme.isDark ? 45 : 60}
+        tint={theme.isDark ? "dark" : "light"}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      {TABS.map((tab) => {
+        const on = active === tab.key;
         const color = on ? theme.accent : theme.textMuted;
         return (
           <TouchableOpacity
-            key={t.key}
+            key={tab.key}
             style={styles.tab}
-            onPress={() => onChange(t.key)}
+            onPress={() => onChange(tab.key)}
             accessibilityRole="button"
-            accessibilityLabel={t.label}
+            accessibilityLabel={tab.label}
             accessibilityState={{ selected: on }}
           >
-            <Icon name={t.icon} size={22} color={color} strokeWidth={2} />
-            <Text style={[styles.label, { color }]}>{t.label}</Text>
+            <Icon name={tab.icon} size={22} color={color} strokeWidth={2} />
+            <Text style={[styles.label, { color }]}>{tab.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -48,12 +56,15 @@ const makeStyles = (t) =>
   StyleSheet.create({
     bar: {
       flexDirection: "row",
-      backgroundColor: t.surface,
+      backgroundColor: t.isDark
+        ? "rgba(10,14,20,0.82)"
+        : "rgba(244,246,251,0.85)",
       borderTopWidth: 1,
       borderTopColor: t.border,
       paddingTop: 8,
       paddingBottom: 22,
       paddingHorizontal: 8,
+      overflow: "hidden",
     },
     tab: {
       flex: 1,
