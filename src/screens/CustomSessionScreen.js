@@ -5,12 +5,12 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Slider from "@react-native-community/slider";
-import { saveTemplate } from "../utils/storage";
+import { saveTemplate, updateTemplate, MAX_NAME_LENGTH } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "../components/Icon";
@@ -38,25 +38,36 @@ const TIME_PILLS = [15, 30, 45, 60, 90, 120];
 export default function CustomSessionScreen({
   subject,
   subjectColor,
+  initialTemplate,
   onStartCustomSession,
   onGoBack,
 }) {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  const [totalMins, setTotalMins] = useState(30);
-  const [customTotalInput, setCustomTotalInput] = useState("30");
-  const [templateName, setTemplateName] = useState("");
-  const [tasks, setTasks] = useState([
-    {
-      id: "1",
-      name: "Deep Study",
-      emoji: "📖",
-      isBreak: false,
-      duration: 30,
-      tip: "Focused, deep work session.",
-    },
-  ]);
+  const initialMins = initialTemplate
+    ? initialTemplate.phases.reduce((sum, phase) => sum + phase.duration, 0)
+    : 30;
+  const [totalMins, setTotalMins] = useState(initialMins);
+  const [customTotalInput, setCustomTotalInput] = useState(String(initialMins));
+  const [templateName, setTemplateName] = useState(initialTemplate?.label || "");
+  const [tasks, setTasks] = useState(() =>
+    initialTemplate
+      ? initialTemplate.phases.map((phase, index) => ({
+          ...phase,
+          id: `${initialTemplate.id}-${index}`,
+        }))
+      : [
+          {
+            id: "1",
+            name: "Deep Study",
+            emoji: "📖",
+            isBreak: false,
+            duration: 30,
+            tip: "Focused, deep work session.",
+          },
+        ]
+  );
 
   const [customTagName, setCustomTagName] = useState("");
   const [isCustomBreak, setIsCustomBreak] = useState(false);
@@ -252,18 +263,27 @@ export default function CustomSessionScreen({
 
     const label = templateName.trim() || `Custom Session (${totalMins}m)`;
     try {
-      await saveTemplate({ label, phases: buildPhases() });
+      if (initialTemplate) {
+        await updateTemplate(initialTemplate.id, {
+          label,
+          phases: buildPhases(),
+        });
+      } else {
+        await saveTemplate({ label, phases: buildPhases() });
+      }
       Alert.alert(
-        "Template Saved",
-        `"${label}" is now under Your Templates on the session picker.`
+        initialTemplate ? "Template Updated" : "Template Saved",
+        initialTemplate
+          ? `"${label}" has been updated.`
+          : `"${label}" is now under Your Templates on the session picker.`
       );
     } catch (e) {
       Alert.alert("Save Failed", "Could not save the template. Please try again.");
     }
-  }, [tasks, templateName, totalMins, allocationComplete, buildPhases]);
+  }, [tasks, templateName, totalMins, allocationComplete, buildPhases, initialTemplate]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -274,7 +294,9 @@ export default function CustomSessionScreen({
         >
           <Icon name="chevron-left" size={22} color={theme.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Build Custom Session</Text>
+        <Text style={styles.headerTitle}>
+          {initialTemplate ? "Edit Template" : "Build Custom Session"}
+        </Text>
         <View style={styles.spacer} />
       </View>
 
@@ -323,6 +345,7 @@ export default function CustomSessionScreen({
             <TextInput
               style={styles.textInput}
               keyboardType="number-pad"
+              accessibilityLabel="Total session time in minutes"
               value={customTotalInput}
               onChangeText={(val) => {
                 setCustomTotalInput(val);
@@ -363,7 +386,9 @@ export default function CustomSessionScreen({
           <Text style={[styles.subLabel, { marginTop: 14 }]}>Or Create Custom Tag:</Text>
           <View style={styles.customTagRow}>
             <TextInput
-              style={[styles.textInput, { flex: 1, marginRight: 8 }]}
+              style={[styles.textInput, styles.customTagInput]}
+              accessibilityLabel="Custom task name"
+              maxLength={MAX_NAME_LENGTH}
               placeholder="e.g. Solve 5 problems"
               placeholderTextColor={theme.textMuted}
               value={customTagName}
@@ -461,14 +486,23 @@ export default function CustomSessionScreen({
                     onPress={() => handleTaskDurationChange(t.id, t.duration - 1)}
                     accessibilityRole="button"
                     accessibilityLabel={`Decrease ${t.name} minutes`}
+                    disabled={t.duration <= 1}
+                    accessibilityState={{ disabled: t.duration <= 1 }}
                   >
                     <Icon name="minus" size={18} color={theme.textPrimary} />
                   </TouchableOpacity>
 
                   <Slider
                     style={styles.slider}
+                    accessibilityLabel={`${t.name} duration`}
+                    accessibilityValue={{
+                      min: 1,
+                      max: Math.max(t.duration, totalMins - allocatedMins + t.duration),
+                      now: t.duration,
+                      text: `${t.duration} ${t.duration === 1 ? "minute" : "minutes"}`,
+                    }}
                     minimumValue={1}
-                    maximumValue={totalMins}
+                    maximumValue={Math.max(t.duration, totalMins - allocatedMins + t.duration)}
                     step={1}
                     value={t.duration}
                     minimumTrackTintColor={t.isBreak ? theme.neutral : theme.accent}
@@ -482,6 +516,8 @@ export default function CustomSessionScreen({
                     onPress={() => handleTaskDurationChange(t.id, t.duration + 1)}
                     accessibilityRole="button"
                     accessibilityLabel={`Increase ${t.name} minutes`}
+                    disabled={allocatedMins >= totalMins}
+                    accessibilityState={{ disabled: allocatedMins >= totalMins }}
                   >
                     <Icon name="plus" size={18} color={theme.textPrimary} />
                   </TouchableOpacity>
@@ -495,6 +531,8 @@ export default function CustomSessionScreen({
         <View style={styles.saveTemplateRow}>
           <TextInput
             style={styles.templateNameInput}
+            accessibilityLabel="Template name"
+            maxLength={MAX_NAME_LENGTH}
             placeholder={`Custom Session (${totalMins}m)`}
             placeholderTextColor={theme.textMuted}
             value={templateName}
@@ -509,10 +547,13 @@ export default function CustomSessionScreen({
             onPress={handleSaveTemplate}
             disabled={tasks.length === 0 || !allocationComplete}
             accessibilityRole="button"
-            accessibilityLabel="Save as template"
+            accessibilityLabel={initialTemplate ? "Update template" : "Save as template"}
+            accessibilityState={{ disabled: tasks.length === 0 || !allocationComplete }}
           >
             <Icon name="check" size={18} color={theme.accent} />
-            <Text style={styles.saveTemplateBtnText}>Save</Text>
+            <Text style={styles.saveTemplateBtnText}>
+              {initialTemplate ? "Update" : "Save"}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -525,6 +566,7 @@ export default function CustomSessionScreen({
           onPress={handleStart}
           disabled={tasks.length === 0 || !allocationComplete}
           accessibilityRole="button"
+          accessibilityState={{ disabled: tasks.length === 0 || !allocationComplete }}
           accessibilityLabel={
             allocationComplete
               ? `Start custom session for ${totalMins} minutes`
@@ -553,13 +595,13 @@ const makeStyles = (t) =>
     backBtn: {
       backgroundColor: t.hairline,
       borderRadius: 10,
-      width: 40,
-      height: 40,
+      width: 48,
+      height: 48,
       alignItems: "center",
       justifyContent: "center",
     },
-    headerTitle: { color: t.textPrimary, fontSize: 16, fontFamily: FONTS.displayBold },
-    spacer: { width: 40 },
+    headerTitle: { color: t.textPrimary, fontSize: 16, fontFamily: FONTS.displayBold, flex: 1, textAlign: "center" },
+    spacer: { width: 48 },
     scroll: { padding: 20, paddingTop: 10 },
     subjectBadge: {
       flexDirection: "row",
@@ -596,6 +638,9 @@ const makeStyles = (t) =>
       marginBottom: 12,
     },
     timePill: {
+      minHeight: 48,
+      minWidth: 48,
+      justifyContent: "center",
       backgroundColor: t.surfaceAlt,
       borderWidth: 1,
       borderColor: t.border,
@@ -611,11 +656,14 @@ const makeStyles = (t) =>
     timePillTextActive: { color: t.onAccent },
     customInputRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
       alignItems: "center",
       marginTop: 4,
     },
     inputLabel: { color: t.textMuted, fontSize: 13, marginRight: 10 },
     textInput: {
+      minHeight: 48,
+      minWidth: 64,
       color: t.textPrimary,
       fontSize: 14,
       backgroundColor: t.surfaceAlt,
@@ -633,6 +681,8 @@ const makeStyles = (t) =>
       gap: 8,
     },
     presetTag: {
+      minHeight: 48,
+      maxWidth: "100%",
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: t.surfaceAlt,
@@ -646,25 +696,32 @@ const makeStyles = (t) =>
       borderColor: t.neutral,
     },
     presetTagEmoji: { fontSize: 13, marginRight: 6 },
-    presetTagText: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyMedium, marginRight: 6 },
+    presetTagText: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyMedium, marginRight: 6, flexShrink: 1 },
     customTagRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
       alignItems: "center",
     },
+    customTagInput: { flexBasis: "100%" },
     typeToggle: {
+      minHeight: 48,
+      justifyContent: "center",
       backgroundColor: t.surfaceAlt,
       borderWidth: 1,
       borderColor: t.border,
       borderRadius: 8,
       paddingVertical: 8,
       paddingHorizontal: 10,
-      marginRight: 8,
     },
     typeToggleBreak: {
       borderColor: t.neutral,
     },
     typeToggleText: { color: t.textTertiary, fontSize: 12 },
     addCustomBtn: {
+      minHeight: 48,
+      minWidth: 48,
+      justifyContent: "center",
       backgroundColor: t.accent,
       borderRadius: 8,
       paddingVertical: 8,
@@ -673,6 +730,8 @@ const makeStyles = (t) =>
     addCustomBtnText: { color: t.onAccent, fontSize: 13, fontFamily: FONTS.bodyBold },
     allocationHeader: {
       flexDirection: "row",
+      flexWrap: "wrap",
+      columnGap: 8,
       justifyContent: "space-between",
       alignItems: "center",
     },
@@ -681,13 +740,16 @@ const makeStyles = (t) =>
     allocWarn: { color: t.warning },
     remainingRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
       alignItems: "center",
       justifyContent: "space-between",
       marginBottom: 10,
       gap: 8,
     },
-    remainingHint: { color: t.accent, fontSize: 12, flex: 1 },
+    remainingHint: { color: t.accent, fontSize: 12, flexGrow: 1, flexBasis: 120 },
     distributeBtn: {
+      minHeight: 48,
+      justifyContent: "center",
       borderWidth: 1,
       borderColor: t.accent,
       borderRadius: 8,
@@ -714,7 +776,7 @@ const makeStyles = (t) =>
     taskName: { color: t.textPrimary, fontSize: 14, fontFamily: FONTS.bodySemibold, flex: 1 },
     taskDurationText: { color: t.accent, fontSize: 14, fontFamily: FONTS.displayBold, marginRight: 10 },
     breakText: { color: t.neutral },
-    deleteBtn: { padding: 4 },
+    deleteBtn: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
     sliderRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -722,23 +784,27 @@ const makeStyles = (t) =>
     stepBtn: {
       backgroundColor: t.border,
       borderRadius: 8,
-      width: 32,
-      height: 32,
+      width: 48,
+      height: 48,
       alignItems: "center",
       justifyContent: "center",
     },
     slider: {
       flex: 1,
-      height: 40,
+      height: 48,
       marginHorizontal: 8,
     },
     saveTemplateRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
       alignItems: "center",
       marginBottom: 12,
     },
     templateNameInput: {
-      flex: 1,
+      flexGrow: 1,
+      flexBasis: 160,
+      minHeight: 48,
       color: t.textPrimary,
       fontSize: 14,
       backgroundColor: t.surface,
@@ -747,9 +813,9 @@ const makeStyles = (t) =>
       borderRadius: 12,
       paddingHorizontal: 14,
       paddingVertical: 12,
-      marginRight: 8,
     },
     saveTemplateBtn: {
+      minHeight: 48,
       backgroundColor: t.surface,
       borderWidth: 1.5,
       borderColor: t.accent,
@@ -766,6 +832,8 @@ const makeStyles = (t) =>
     },
     saveTemplateBtnText: { color: t.accent, fontSize: 14, fontFamily: FONTS.bodyBold },
     startBtn: {
+      minHeight: 48,
+      paddingHorizontal: 12,
       backgroundColor: t.accent,
       borderRadius: 14,
       paddingVertical: 16,
@@ -780,6 +848,8 @@ const makeStyles = (t) =>
       opacity: 0.5,
     },
     startBtnText: {
+      flexShrink: 1,
+      textAlign: "center",
       color: t.onAccent,
       fontSize: 16,
       fontFamily: FONTS.bodyBold,

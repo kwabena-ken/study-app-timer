@@ -4,6 +4,11 @@ import { generateId } from "./generateId";
 const STORAGE_KEY = "@study_timer/sessions";
 const SUBJECTS_KEY = "@study_timer/subjects";
 
+// Maximum length for user-authored names. Nothing in the app needs more, and an
+// unbounded field can otherwise be pasted into a single oversized storage value.
+// Enforced here (not only in the UI) so the invariant holds for every caller.
+export const MAX_NAME_LENGTH = 64;
+
 // ────────────────────────────────────────────
 //  Per-key write serialization
 // ────────────────────────────────────────────
@@ -47,6 +52,45 @@ export const SUBJECT_COLORS = [
 ];
 
 // ────────────────────────────────────────────
+//  Defensive read helpers
+// ────────────────────────────────────────────//
+// Storage is untrusted input: a device backup restore, a partially-written
+// value, or a future schema change can all hand us JSON that *parses* but has
+// the wrong shape. A `try/catch` around JSON.parse alone does not help there —
+// the wrong shape escapes and throws later, far from its cause. These helpers
+// normalize reads so a malformed entry is dropped instead of crashing a screen.
+
+/** True for a non-null, non-array plain object. */
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Keep only the entries of an array that satisfy `predicate`. Never throws and
+ * never returns a non-array, so callers can always map/filter over the result.
+ */
+function keepValidEntries(parsed, predicate, fallback = []) {
+  if (!Array.isArray(parsed)) return fallback;
+  return parsed.filter((entry) => {
+    try {
+      return predicate(entry);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** A phase is usable only if it can actually be rendered and timed. */
+function isValidPhase(phase) {
+  return (
+    isPlainObject(phase) &&
+    typeof phase.name === "string" &&
+    Number.isFinite(phase.duration) &&
+    phase.duration > 0
+  );
+}
+
+// ────────────────────────────────────────────
 //  Subjects
 // ────────────────────────────────────────────
 
@@ -57,7 +101,13 @@ export const SUBJECT_COLORS = [
 export async function loadSubjects() {
   try {
     const raw = await AsyncStorage.getItem(SUBJECTS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    return keepValidEntries(JSON.parse(raw), (s) =>
+      isPlainObject(s) && typeof s.name === "string" && s.name.trim().length > 0
+    ).map((s) => ({
+      name: s.name,
+      color: typeof s.color === "string" ? s.color : SUBJECT_COLORS[0],
+    }));
   } catch {
     return [];
   }
@@ -71,7 +121,7 @@ export async function loadSubjects() {
  * @returns {Promise<{ name: string, color: string }>}
  */
 export async function saveSubject(name) {
-  const trimmed = name.trim();
+  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
   if (!trimmed) return { name: "Unspecified", color: SUBJECT_COLORS[0] };
 
   return withKeyLock(SUBJECTS_KEY, async () => {
@@ -109,7 +159,7 @@ export async function updateSubjectColor(name, color) {
 
 /** Rename a subject and update matching historical session records. */
 export async function renameSubject(currentName, nextName) {
-  const trimmed = nextName.trim();
+  const trimmed = nextName.trim().slice(0, MAX_NAME_LENGTH);
   if (!trimmed) throw new Error("Subject name cannot be empty");
 
   const renamed = await withKeyLock(SUBJECTS_KEY, async () => {
@@ -236,7 +286,10 @@ export async function saveSession({
 export async function loadSessions() {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    // Keep every record that has an id; history is too valuable to discard on a
+    // single bad field, and screens already guard missing optional values.
+    return keepValidEntries(JSON.parse(raw), (s) => isPlainObject(s) && typeof s.id === "string");
   } catch (e) {
     console.warn("Failed to load sessions:", e);
     return [];
@@ -263,9 +316,55 @@ export async function deleteSession(id) {
  * @param {Object} updates - Fields to merge into the record
  */
 export async function updateSession(id, updates) {
+  if (!isPlainObject(updates)) return;
   return withKeyLock(STORAGE_KEY, async () => {
     const sessions = await loadSessions();
-    const updated = sessions.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    const updated = sessions.map((s) => {
+      if (s.id !== id) return s;
+
+      const safe = { ...s };
+
+      if ("subject" in updates) {
+        if (typeof updates.subject === "string") {
+          const trimmed = updates.subject.trim().slice(0, MAX_NAME_LENGTH);
+          safe.subject = trimmed || "Unspecified";
+        }
+      }
+
+      if ("label" in updates) {
+        if (typeof updates.label === "string") {
+          safe.label = updates.label.trim().slice(0, MAX_NAME_LENGTH);
+        }
+      }
+
+      if ("completed" in updates) {
+        if (typeof updates.completed === "boolean") {
+          safe.completed = updates.completed;
+        }
+      }
+
+      if ("actualStudyMins" in updates) {
+        if (
+          typeof updates.actualStudyMins === "number" &&
+          Number.isFinite(updates.actualStudyMins) &&
+          updates.actualStudyMins >= 0
+        ) {
+          safe.actualStudyMins = updates.actualStudyMins;
+        }
+      }
+
+      if ("phasesCompleted" in updates) {
+        if (
+          typeof updates.phasesCompleted === "number" &&
+          Number.isFinite(updates.phasesCompleted) &&
+          updates.phasesCompleted >= 0
+        ) {
+          safe.phasesCompleted = Math.floor(updates.phasesCompleted);
+        }
+      }
+
+      return safe;
+    });
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   });
 }
@@ -294,7 +393,22 @@ const TEMPLATES_KEY = "@study_timer/templates";
 export async function loadTemplates() {
   try {
     const raw = await AsyncStorage.getItem(TEMPLATES_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    // A template without usable phases cannot be launched or edited (the picker
+    // and builder both dereference `phases`), so drop it rather than crash.
+    const templates = keepValidEntries(JSON.parse(raw), (t) => {
+      if (!isPlainObject(t) || typeof t.id !== "string") return false;
+      return (
+        typeof t.label === "string" &&
+        Array.isArray(t.phases) &&
+        t.phases.some(isValidPhase)
+      );
+    }).map((t) => ({ ...t, phases: t.phases.filter(isValidPhase) }));
+    // Favorites are pinned first while preserving the user's order within
+    // each favorite/non-favorite group. Legacy templates have no flag.
+    return templates
+      .map((template) => ({ ...template, favorite: template.favorite === true }))
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite));
   } catch (e) {
     console.warn("Failed to load templates:", e);
     return [];
@@ -311,8 +425,9 @@ export async function loadTemplates() {
 export async function saveTemplate({ label, phases }) {
   const record = {
     id: generateId(),
-    label: (label && label.trim()) || "Custom Session",
+    label: (label && label.trim().slice(0, MAX_NAME_LENGTH)) || "Custom Session",
     phases: phases || [],
+    favorite: false,
   };
 
   return withKeyLock(TEMPLATES_KEY, async () => {
@@ -337,6 +452,87 @@ export async function deleteTemplate(id) {
   });
 }
 
+/** Update the editable fields of a saved template. */
+export async function updateTemplate(id, updates) {
+  return withKeyLock(TEMPLATES_KEY, async () => {
+    const templates = await loadTemplates();
+    let updatedTemplate = null;
+    const updated = templates.map((template) => {
+      if (template.id !== id) return template;
+      updatedTemplate = {
+        ...template,
+        ...updates,
+        id: template.id,
+        label:
+          updates.label != null
+            ? updates.label.trim().slice(0, MAX_NAME_LENGTH) || "Custom Session"
+            : template.label,
+      };
+      return updatedTemplate;
+    });
+    if (!updatedTemplate) throw new Error("Template not found");
+    await AsyncStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    return updatedTemplate;
+  });
+}
+
+/** Duplicate a template directly after the original in its group. */
+export async function duplicateTemplate(id) {
+  return withKeyLock(TEMPLATES_KEY, async () => {
+    const templates = await loadTemplates();
+    const index = templates.findIndex((template) => template.id === id);
+    if (index < 0) throw new Error("Template not found");
+    const source = templates[index];
+    const copy = {
+      ...source,
+      id: generateId(),
+      label: `${source.label} Copy`.slice(0, MAX_NAME_LENGTH),
+      phases: source.phases.map((phase) => ({ ...phase })),
+    };
+    const updated = [...templates];
+    updated.splice(index + 1, 0, copy);
+    await AsyncStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    return copy;
+  });
+}
+
+/** Toggle favorite status and keep favorites pinned before other templates. */
+export async function toggleTemplateFavorite(id) {
+  return withKeyLock(TEMPLATES_KEY, async () => {
+    const templates = await loadTemplates();
+    const updated = templates
+      .map((template) =>
+        template.id === id
+          ? { ...template, favorite: !template.favorite }
+          : template
+      )
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite));
+    await AsyncStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    return updated;
+  });
+}
+
+/** Move a template within its favorite or non-favorite group. */
+export async function moveTemplate(id, direction) {
+  return withKeyLock(TEMPLATES_KEY, async () => {
+    const templates = await loadTemplates();
+    const from = templates.findIndex((template) => template.id === id);
+    const to = from + direction;
+    if (
+      from < 0 ||
+      to < 0 ||
+      to >= templates.length ||
+      templates[from].favorite !== templates[to].favorite
+    ) {
+      return templates;
+    }
+    const updated = [...templates];
+    [updated[from], updated[to]] = [updated[to], updated[from]];
+    await AsyncStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    return updated;
+  });
+}
+
 // ────────────────────────────────────────────
 //  Settings
 // ────────────────────────────────────────────
@@ -355,14 +551,79 @@ export const DEFAULT_SETTINGS = {
 };
 
 /**
+ * Normalize and sanitize settings object against defaults or a custom fallback.
+ * Validates types, non-empty trimmed strings, booleans, and numeric bounds.
+ *
+ * @param {Object} input - Candidate settings object
+ * @param {Object} [fallback=DEFAULT_SETTINGS] - Fallback values for invalid/missing fields
+ * @returns {Object} Sanitized settings object containing all standard settings keys
+ */
+export function normalizeSettings(input, fallback = DEFAULT_SETTINGS) {
+  const src = isPlainObject(input) ? input : {};
+  const base = isPlainObject(fallback) ? fallback : DEFAULT_SETTINGS;
+
+  const soundPreset =
+    typeof src.soundPreset === "string" && src.soundPreset.trim().length > 0
+      ? src.soundPreset.trim()
+      : base.soundPreset;
+
+  const theme =
+    typeof src.theme === "string" && src.theme.trim().length > 0
+      ? src.theme.trim()
+      : base.theme;
+
+  const vibrate =
+    typeof src.vibrate === "boolean" ? src.vibrate : base.vibrate;
+
+  const keepAwake =
+    typeof src.keepAwake === "boolean" ? src.keepAwake : base.keepAwake;
+
+  const autoAdvance =
+    typeof src.autoAdvance === "boolean" ? src.autoAdvance : base.autoAdvance;
+
+  const weeklyGoalEnabled =
+    typeof src.weeklyGoalEnabled === "boolean"
+      ? src.weeklyGoalEnabled
+      : base.weeklyGoalEnabled;
+
+  const weeklyGoalMins =
+    typeof src.weeklyGoalMins === "number" &&
+    Number.isFinite(src.weeklyGoalMins) &&
+    src.weeklyGoalMins > 0
+      ? src.weeklyGoalMins
+      : base.weeklyGoalMins;
+
+  const weeklyGoalDays =
+    typeof src.weeklyGoalDays === "number" &&
+    Number.isFinite(src.weeklyGoalDays) &&
+    src.weeklyGoalDays >= 1 &&
+    src.weeklyGoalDays <= 7
+      ? Math.round(src.weeklyGoalDays)
+      : base.weeklyGoalDays;
+
+  return {
+    soundPreset,
+    vibrate,
+    keepAwake,
+    autoAdvance,
+    theme,
+    weeklyGoalEnabled,
+    weeklyGoalMins,
+    weeklyGoalDays,
+  };
+}
+
+/**
  * Load user settings from local storage.
  */
 export async function loadSettings() {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw);
+    return normalizeSettings(parsed, DEFAULT_SETTINGS);
   } catch {
-    return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
@@ -374,12 +635,13 @@ export async function saveSettings(settings) {
   try {
     return await withKeyLock(SETTINGS_KEY, async () => {
       const current = await loadSettings();
-      const updated = { ...current, ...settings };
-      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
-      return updated;
+      const merged = isPlainObject(settings) ? { ...current, ...settings } : current;
+      const normalized = normalizeSettings(merged, current);
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
+      return normalized;
     });
   } catch (e) {
     console.warn("Failed to save settings", e);
-    return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS };
   }
 }

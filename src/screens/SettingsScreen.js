@@ -4,12 +4,12 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Switch,
   Alert,
   TextInput,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   SUBJECT_COLORS,
   loadSettings,
@@ -19,6 +19,7 @@ import {
   renameSubject,
   deleteSubject,
   moveSubject,
+  MAX_NAME_LENGTH,
 } from "../utils/storage";
 import { useAlarmSound } from "../hooks/useAlarmSound";
 import { useTheme } from "../theme/ThemeContext";
@@ -166,7 +167,7 @@ export default function SettingsScreen({ onGoHome }) {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>SETTINGS</Text>
@@ -418,6 +419,7 @@ export default function SettingsScreen({ onGoHome }) {
                             value={subjectName}
                             onChangeText={setSubjectName}
                             onSubmitEditing={handleRenameSubject}
+                            maxLength={MAX_NAME_LENGTH}
                             autoFocus
                             returnKeyType="done"
                             accessibilityLabel="New subject name"
@@ -680,9 +682,10 @@ const makeStyles = (t) =>
     },
     toggleTitle: { color: t.textPrimary, fontSize: 14, fontFamily: FONTS.bodySemibold },
     toggleDesc: { color: t.textMuted, fontSize: 11, marginTop: 2, paddingRight: 12, fontFamily: FONTS.body },
-    themeRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+    themeRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
     themePill: {
-      flex: 1,
+      maxWidth: "100%",
+      minHeight: 48,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
@@ -698,8 +701,8 @@ const makeStyles = (t) =>
       borderColor: t.accent,
     },
     themePillEmoji: { fontSize: 14, marginRight: 6 },
-    themePillText: { color: t.textMuted, fontSize: 12, fontFamily: FONTS.bodySemibold },
-    themePillTextActive: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyBold },
+    themePillText: { color: t.textMuted, fontSize: 12, fontFamily: FONTS.bodySemibold, flexShrink: 1 },
+    themePillTextActive: { color: t.textPrimary, fontSize: 12, fontFamily: FONTS.bodyBold, flexShrink: 1 },
     subjectEmpty: {
       color: t.textMuted,
       fontFamily: FONTS.body,

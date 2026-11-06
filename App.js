@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from "react";
-import { StatusBar, View } from "react-native";
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { StatusBar, View, BackHandler } from "react-native";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import ErrorBoundary from "./src/components/ErrorBoundary";
@@ -16,6 +17,7 @@ import SettingsScreen from "./src/screens/SettingsScreen";
 import TabBar from "./src/components/TabBar";
 import { SESSIONS } from "./src/constants/sessions";
 import { saveSession, saveSubject } from "./src/utils/storage";
+import { cancelSessionNotifications } from "./src/hooks/useNotifications";
 import { FONT_MAP } from "./src/theme/typography";
 
 // Hold the native splash until fonts resolve, so the first paint already has
@@ -36,6 +38,12 @@ export default function App() {
   // When a Home quick-start chip is tapped, remember its target so we can jump
   // straight past the session picker once a subject is chosen.
   const [pendingSessionKey, setPendingSessionKey] = useState(null);
+  const [editingTemplate, setEditingTemplate] = useState(null);
+
+  // Clean up orphaned scheduled notifications on startup
+  useEffect(() => {
+    cancelSessionNotifications().catch(() => {});
+  }, []);
 
   const [fontsLoaded, fontError] = useFonts(FONT_MAP);
   const ready = fontsLoaded || fontError;
@@ -55,6 +63,7 @@ export default function App() {
     setCustomSession(null);
     setSessionMeta(null);
     setPendingSessionKey(null);
+    setEditingTemplate(null);
   }, []);
 
   const startStudying = useCallback(() => {
@@ -77,6 +86,7 @@ export default function App() {
 
       // Honor a pending quick-start, otherwise land on the session picker.
       if (pendingSessionKey === "custom") {
+        setEditingTemplate(null);
         setScreen("custom-session-builder");
       } else if (pendingSessionKey && SESSIONS[pendingSessionKey]) {
         setSessionKey(pendingSessionKey);
@@ -105,6 +115,12 @@ export default function App() {
   }, []);
 
   const openCustomSessionBuilder = useCallback(() => {
+    setEditingTemplate(null);
+    setScreen("custom-session-builder");
+  }, []);
+
+  const openTemplateEditor = useCallback((template) => {
+    setEditingTemplate(template);
     setScreen("custom-session-builder");
   }, []);
 
@@ -116,7 +132,55 @@ export default function App() {
   }, []);
 
   const goBackToSessionPicker = useCallback(() => {
+    setEditingTemplate(null);
     setScreen("session-picker");
+  }, []);
+
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const goBackToSessionPickerRef = useRef(goBackToSessionPicker);
+  goBackToSessionPickerRef.current = goBackToSessionPicker;
+  const goBackToSubjectPickerRef = useRef(goBackToSubjectPicker);
+  goBackToSubjectPickerRef.current = goBackToSubjectPicker;
+  const goHomeRef = useRef(goHome);
+  goHomeRef.current = goHome;
+
+  // Intercept Android hardware back button and gesture navigation
+  useEffect(() => {
+    const onBackPress = () => {
+      const currentScreen = screenRef.current;
+      if (currentScreen === "custom-session-builder") {
+        goBackToSessionPickerRef.current();
+        return true;
+      }
+      if (currentScreen === "session-picker") {
+        goBackToSubjectPickerRef.current();
+        return true;
+      }
+      if (
+        currentScreen === "subject-picker" ||
+        currentScreen === "done" ||
+        currentScreen === "stats" ||
+        currentScreen === "history" ||
+        currentScreen === "settings"
+      ) {
+        goHomeRef.current();
+        return true;
+      }
+      if (currentScreen === "home") {
+        return false;
+      }
+      return false;
+    };
+
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => {
+      if (sub && typeof sub.remove === "function") {
+        sub.remove();
+      } else if (BackHandler.removeEventListener) {
+        BackHandler.removeEventListener("hardwareBackPress", onBackPress);
+      }
+    };
   }, []);
 
   // Called when all phases of a session are completed
@@ -184,7 +248,7 @@ export default function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <ThemedStatusBar />
-        <View style={{ flex: 1 }} onLayout={onLayoutRoot}>
+        <SafeAreaProvider initialMetrics={initialWindowMetrics} onLayout={onLayoutRoot}>
           <View style={{ flex: 1 }}>
             {screen === "home" && (
               <HomeScreen
@@ -210,6 +274,7 @@ export default function App() {
                 onStartSession={handleStartSession}
                 onOpenCustomSession={openCustomSessionBuilder}
                 onStartTemplate={handleStartCustomSession}
+                onEditTemplate={openTemplateEditor}
                 onGoBack={goBackToSubjectPicker}
               />
             )}
@@ -218,6 +283,7 @@ export default function App() {
               <CustomSessionScreen
                 subject={selectedSubject}
                 subjectColor={subjectColor}
+                initialTemplate={editingTemplate}
                 onStartCustomSession={handleStartCustomSession}
                 onGoBack={goBackToSessionPicker}
               />
@@ -252,7 +318,7 @@ export default function App() {
           {TAB_SCREENS.includes(screen) && (
             <TabBar active={screen} onChange={handleTabChange} />
           )}
-        </View>
+        </SafeAreaProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { BlurView } from "expo-blur";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "./Icon";
@@ -20,10 +21,15 @@ const TABS = [
  */
 export default function TabBar({ active, onChange }) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   return (
-    <View style={styles.bar}>
+    <View style={[styles.bar, {
+      paddingBottom: insets.bottom + 8,
+      paddingLeft: insets.left + 8,
+      paddingRight: insets.right + 8,
+    }]}>
       {/* Translucent blur underlay; tabs render above it */}
       <BlurView
         intensity={theme.isDark ? 45 : 60}
@@ -62,12 +68,11 @@ const makeStyles = (t) =>
       borderTopWidth: 1,
       borderTopColor: t.border,
       paddingTop: 8,
-      paddingBottom: 22,
-      paddingHorizontal: 8,
       overflow: "hidden",
     },
     tab: {
       flex: 1,
+      minHeight: 48,
       alignItems: "center",
       justifyContent: "center",
       gap: 4,

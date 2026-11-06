@@ -4,18 +4,20 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Alert,
   TextInput,
   RefreshControl,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   loadSessions,
   clearSessions,
   deleteSession,
   updateSession,
   loadSubjects,
+  saveSubject,
+  MAX_NAME_LENGTH,
 } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
@@ -155,13 +157,17 @@ export default function HistoryScreen({ onGoHome }) {
 
   // ── Inline edit: save ──
   const handleSaveEdit = useCallback(async () => {
-    if (editingId && editText.trim()) {
-      await updateSession(editingId, { subject: editText.trim() });
+    const trimmed = editText.trim();
+    if (editingId && trimmed) {
+      const savedSubj = await saveSubject(trimmed);
+      await updateSession(editingId, { subject: savedSubj.name });
       setSessions((prev) =>
         prev.map((s) =>
-          s.id === editingId ? { ...s, subject: editText.trim() } : s
+          s.id === editingId ? { ...s, subject: savedSubj.name } : s
         )
       );
+      const updated = await loadSubjects();
+      setSubjects(updated);
     }
     setEditingId(null);
     setEditText("");
@@ -227,7 +233,7 @@ export default function HistoryScreen({ onGoHome }) {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>HISTORY</Text>
@@ -242,6 +248,7 @@ export default function HistoryScreen({ onGoHome }) {
           placeholder="Search sessions or subjects"
           placeholderTextColor={theme.textDisabled}
           returnKeyType="search"
+          maxLength={200}
           clearButtonMode="while-editing"
           accessibilityLabel="Search sessions or subjects"
         />
@@ -392,6 +399,7 @@ export default function HistoryScreen({ onGoHome }) {
                           value={editText}
                           onChangeText={setEditText}
                           onSubmitEditing={handleSaveEdit}
+                          maxLength={MAX_NAME_LENGTH}
                           autoFocus
                         />
                         <TouchableOpacity

@@ -4,11 +4,13 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Alert,
   Vibration,
   Switch,
+  AppState,
+  BackHandler,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { studyColors, breakColor } from "../constants/sessions";
@@ -18,6 +20,11 @@ import { useTimer } from "../hooks/useTimer";
 import { useNotifications } from "../hooks/useNotifications";
 import { useAlarmSound } from "../hooks/useAlarmSound";
 import { loadSettings, saveSettings } from "../utils/storage";
+import {
+  buildNotificationChain,
+  defaultChainBody,
+  reconcileTimeline,
+} from "../utils/sessionTimeline";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import SessionDial from "../components/SessionDial";
@@ -61,7 +68,7 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   // (only counts time actually elapsed, not skipped time)
   const actualStudySecsRef = useRef(0);
 
-  const { scheduleChain, cancelAll } = useNotifications();
+  const { scheduleChain, cancelAll, error: notificationError } = useNotifications();
   const { playAlarm } = useAlarmSound();
 
   // handlePhaseComplete (defined below) depends on goToPhase/finishSession,
@@ -77,6 +84,29 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   // without depending on `secondsLeft` (which would reschedule every tick).
   const secondsLeftRef = useRef(0);
   secondsLeftRef.current = secondsLeft;
+
+  // Track timeline anchor timestamp and remaining duration for background sync
+  const timelineAnchorRef = useRef({
+    anchorAt: Date.now(),
+    remainingMs: (phases[0]?.duration || 0) * 60000,
+  });
+  const appStateRef = useRef(AppState.currentState);
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const phaseIndexRef = useRef(phaseIndex);
+  phaseIndexRef.current = phaseIndex;
+  const autoAdvanceRef = useRef(autoAdvance);
+  autoAdvanceRef.current = autoAdvance;
+
+  // Keep timeline anchor up to date with timer ticks when running
+  useEffect(() => {
+    if (running) {
+      timelineAnchorRef.current = {
+        anchorAt: Date.now(),
+        remainingMs: secondsLeft * 1000,
+      };
+    }
+  }, [running, secondsLeft]);
 
   // Mirror the vibrate setting into a ref so the haptic helpers below stay
   // stable (they never need to be recreated when the setting flips).
@@ -123,49 +153,33 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   // when auto-advance is on we also pre-schedule every subsequent phase
   // boundary at cumulative offsets, so alarms still fire while the app is
   // backgrounded (JS timers are frozen in the background).
-  const buildChainItems = useCallback(() => {
-    const current = phases[phaseIndex];
-    if (!current) return [];
-
-    const bodyFor = (completed, idx) => {
-      const upNext = phases[idx + 1];
-      return upNext
-        ? `"${completed.name}" done. Up next: ${upNext.emoji} ${upNext.name}.`
-        : `"${completed.name}" done — session complete! 🎉`;
-    };
-
-    let offset = secondsLeftRef.current;
-    const items = [
-      {
-        seconds: offset,
-        title: "Study Timer ⏰",
-        body: bodyFor(current, phaseIndex),
-      },
-    ];
-
-    if (autoAdvance) {
-      for (let i = phaseIndex + 1; i < phases.length; i++) {
-        offset += phases[i].duration * 60;
-        items.push({
-          seconds: offset,
-          title: "Study Timer ⏰",
-          body: bodyFor(phases[i], i),
-        });
-      }
-    }
-    return items;
-  }, [phases, phaseIndex, autoAdvance]);
+  //
+  // `buildNotificationChain` returns ABSOLUTE epoch-ms deadlines, which is what
+  // the OS scheduler needs — the in-app timer only knows a relative countdown,
+  // so the remaining seconds are anchored to "now" here.
+  const buildChainItems = useCallback(
+    () =>
+      buildNotificationChain({
+        phases,
+        phaseIndex,
+        remainingMs: Math.max(0, secondsLeftRef.current) * 1000,
+        now: Date.now(),
+        autoAdvance,
+        bodyFor: defaultChainBody,
+      }),
+    [phases, phaseIndex, autoAdvance]
+  );
 
   // ── (Re)schedule or cancel the notification chain ──
   // Re-runs when the timer starts/stops, the phase changes, auto-advance is
-  // toggled, or the chosen sound changes.
+  // toggled, or the chosen sound/vibration changes.
   useEffect(() => {
     if (running) {
-      scheduleChain(buildChainItems(), soundPreset);
+      scheduleChain(buildChainItems(), soundPreset, vibrate);
     } else {
       cancelAll();
     }
-  }, [running, phaseIndex, autoAdvance, soundPreset, buildChainItems, scheduleChain, cancelAll]);
+  }, [running, phaseIndex, autoAdvance, soundPreset, vibrate, buildChainItems, scheduleChain, cancelAll]);
 
   // ── Per-phase identity color ──
   // Study phases cycle through studyColors by their study-index; breaks are slate.
@@ -213,15 +227,26 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   );
 
   // Finish the whole session (last phase done, or the final phase was skipped).
-  const finishSession = useCallback(() => {
-    actualStudySecsRef.current += phaseElapsedSecs(phase, secondsLeft);
+  const finishSession = useCallback(
+    (alreadyCredited = false) => {
+      if (!alreadyCredited) {
+        const curPhase = phases[phaseIndexRef.current] || phase;
+        actualStudySecsRef.current += phaseElapsedSecs(curPhase, secondsLeftRef.current);
+      }
 
-    stop();
-    cancelAll();
+      stop();
+      cancelAll();
 
-    const actualStudyMins = minsFromSecs(actualStudySecsRef.current);
-    onComplete({ startedAt: startedAtRef.current, actualStudyMins });
-  }, [phase, secondsLeft, stop, cancelAll, onComplete]);
+      const actualStudyMins = minsFromSecs(actualStudySecsRef.current);
+      onComplete({
+        startedAt: startedAtRef.current || new Date().toISOString(),
+        actualStudyMins,
+      });
+    },
+    [phases, phase, stop, cancelAll, onComplete]
+  );
+  const finishSessionRef = useRef(finishSession);
+  finishSessionRef.current = finishSession;
 
   const nextPhase = useCallback(() => {
     if (phaseIndex + 1 < phases.length) {
@@ -246,6 +271,79 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
 
   // Keep the timer's completion callback pointing at the latest closure.
   onCompleteRef.current = handlePhaseComplete;
+
+  // Synchronize session timing across background states and screen locks
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      const prevAppState = appStateRef.current;
+      appStateRef.current = nextAppState;
+
+      if (prevAppState === "active" && nextAppState.match(/inactive|background/)) {
+        timelineAnchorRef.current = {
+          anchorAt: Date.now(),
+          remainingMs: secondsLeftRef.current * 1000,
+        };
+      }
+
+      if (
+        (prevAppState === "background" || prevAppState === "inactive" || prevAppState !== "active") &&
+        nextAppState === "active"
+      ) {
+        if (!runningRef.current) return;
+
+        const reconciled = reconcileTimeline({
+          phases,
+          phaseIndex: phaseIndexRef.current,
+          remainingMs: timelineAnchorRef.current.remainingMs,
+          running: runningRef.current,
+          anchorAt: timelineAnchorRef.current.anchorAt,
+          now: Date.now(),
+          autoAdvance: autoAdvanceRef.current,
+        });
+
+        // Credit elapsed study time for completed study phases in background
+        if (reconciled.advancedPhases && reconciled.advancedPhases.length > 0) {
+          for (const adv of reconciled.advancedPhases) {
+            const p = phases[adv.index];
+            if (adv.completed && p && !p.isBreak) {
+              actualStudySecsRef.current += p.duration * 60;
+            }
+          }
+        }
+
+        if (reconciled.finished) {
+          timelineAnchorRef.current = { anchorAt: Date.now(), remainingMs: 0 };
+          finishSessionRef.current(true);
+        } else if (reconciled.awaitingNext) {
+          setPhaseIndex(reconciled.phaseIndex);
+          loadDuration(phases[reconciled.phaseIndex].duration * 60);
+          timelineAnchorRef.current = {
+            anchorAt: Date.now(),
+            remainingMs: phases[reconciled.phaseIndex].duration * 60 * 1000,
+          };
+        } else {
+          if (reconciled.phaseIndex !== phaseIndexRef.current) {
+            setPhaseIndex(reconciled.phaseIndex);
+          }
+          const remainingSecs = Math.max(1, Math.ceil(reconciled.remainingMs / 1000));
+          restart(remainingSecs);
+          timelineAnchorRef.current = {
+            anchorAt: Date.now(),
+            remainingMs: reconciled.remainingMs,
+          };
+        }
+      }
+    };
+
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => {
+      if (sub && typeof sub.remove === "function") {
+        sub.remove();
+      } else if (AppState.removeEventListener) {
+        AppState.removeEventListener("change", handleAppStateChange);
+      }
+    };
+  }, [phases, loadDuration, restart]);
 
   const resetPhase = useCallback(() => {
     cancelAll();
@@ -308,18 +406,19 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
       // accumulated-elapsed basis as finishSession, so quitting credits exactly
       // what a normal finish would for the same elapsed time — phases skipped
       // early are not credited their full nominal length.
-      if (startedAtRef.current && onPartialQuit) {
+      if (onPartialQuit) {
+        const curPhase = phases[phaseIndexRef.current] || phase;
         const actualStudyMins = minsFromSecs(
-          actualStudySecsRef.current + phaseElapsedSecs(phase, secondsLeft)
+          actualStudySecsRef.current + phaseElapsedSecs(curPhase, secondsLeftRef.current)
         );
 
         const completedStudyPhases = phases
-          .slice(0, phaseIndex)
+          .slice(0, phaseIndexRef.current)
           .filter((p) => !p.isBreak).length;
 
         if (actualStudyMins > 0) {
           onPartialQuit({
-            startedAt: startedAtRef.current,
+            startedAt: startedAtRef.current || new Date().toISOString(),
             actualStudyMins,
             phasesCompleted: completedStudyPhases,
           });
@@ -346,7 +445,26 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
     } else {
       doLeave();
     }
-  }, [running, stop, cancelAll, onGoHome, onPartialQuit, phases, phaseIndex, phase, secondsLeft]);
+  }, [running, stop, cancelAll, onGoHome, onPartialQuit, phases, phase]);
+
+  const handleGoHomeRef = useRef(handleGoHome);
+  handleGoHomeRef.current = handleGoHome;
+
+  // Intercept Android hardware back button and gesture navigation
+  useEffect(() => {
+    const onBackPress = () => {
+      handleGoHomeRef.current();
+      return true;
+    };
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => {
+      if (sub && typeof sub.remove === "function") {
+        sub.remove();
+      } else if (BackHandler.removeEventListener) {
+        BackHandler.removeEventListener("hardwareBackPress", onBackPress);
+      }
+    };
+  }, []);
 
   // ── Memoized dynamic styles ──
   const playBtnStyle = useMemo(
@@ -372,7 +490,7 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   const glowColor = theme.isDark ? DIAL_GLOW : color;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.sessionTop}>
         <TouchableOpacity
@@ -482,6 +600,18 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           accessibilityState={{ checked: autoAdvance }}
         />
       </View>
+
+      {/* ── Background alarm warning ── */}
+      {/* Scheduling can fail (denied permission, OS limit). The in-app alarm
+          still sounds, so say so instead of failing silently. */}
+      {notificationError && (
+        <View style={styles.alarmWarning}>
+          <Icon name="clock" size={16} color={theme.warning} />
+          <Text style={styles.alarmWarningText}>
+            Background alarms unavailable. The timer and in-app alarm still work.
+          </Text>
+        </View>
+      )}
 
       {/* ── Tip ── */}
       <TouchableOpacity
@@ -644,6 +774,25 @@ const makeStyles = (t) =>
       paddingVertical: 7,
       paddingHorizontal: 16,
       marginTop: 18,
+    },
+    alarmWarning: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 9,
+      marginHorizontal: 22,
+      marginTop: 16,
+      padding: 11,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: t.warning,
+      backgroundColor: t.surface,
+    },
+    alarmWarningText: {
+      flex: 1,
+      color: t.textSecondary,
+      fontFamily: FONTS.body,
+      fontSize: 11.5,
+      lineHeight: 16,
     },
     tipBtnText: { fontFamily: FONTS.bodyMedium, fontSize: 12 },
     tipBox: {

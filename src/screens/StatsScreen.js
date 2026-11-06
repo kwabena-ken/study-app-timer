@@ -4,10 +4,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { loadSessions, loadSubjects, loadSettings } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
@@ -198,7 +198,7 @@ export default function StatsScreen() {
   const hasAny = sessions.length > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>STATS</Text>

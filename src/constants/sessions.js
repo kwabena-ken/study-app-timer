@@ -18,15 +18,15 @@ const BREAK_2HR = {
 
 const raw1hr = [
   { name: "Flashcard Review", duration: 10, emoji: "🃏", tip: "Retrieval only — no new material." },
-  { name: "Deep Study", duration: 30, emoji: "📖", tip: "Read, understand, annotate. No card making." },
-  { name: "Past Question", duration: 15, emoji: "✏️", tip: "Attempt → stuck 5 min max → check → explain why." },
+  { name: "Deep Study", duration: 24, emoji: "📖", tip: "Read, understand, annotate. No card making." },
+  { name: "Past Question", duration: 12, emoji: "✏️", tip: "Attempt → stuck 5 min max → check → explain why." },
   { name: "Card Making + Review Gaps", duration: 5, emoji: "✍️", tip: "Make cards from what you just studied." },
 ];
 
 const raw2hr = [
   { name: "Flashcard Review", duration: 10, emoji: "🃏", tip: "Retrieval only — no new material." },
-  { name: "Deep Study — Topic 1", duration: 30, emoji: "📖", tip: "Read, understand, annotate. No card making." },
-  { name: "Deep Study — Topic 2", duration: 25, emoji: "📗", tip: "New topic or continuation. Stay focused." },
+  { name: "Deep Study — Topic 1", duration: 35, emoji: "📖", tip: "Read, understand, annotate. No card making." },
+  { name: "Deep Study — Topic 2", duration: 30, emoji: "📗", tip: "New topic or continuation. Stay focused." },
   { name: "Past Question", duration: 20, emoji: "✏️", tip: "Attempt → stuck 5 min max → check → explain why." },
   { name: "Card Making + Review Gaps", duration: 15, emoji: "✍️", tip: "Make cards, flag anything unclear." },
 ];

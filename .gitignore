@@ -4,4 +4,29 @@ dist/
 *.log
 *.tsbuildinfo
 .claude/
+.agents/
 design/
+
+# Environment secrets
+.env*
+
+# Keystores & Android signing
+*.jks
+*.keystore
+
+# iOS keys & certificates
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Build artifacts
+*.apk
+*.aab
+
+# Native prebuild directories
+android/
+ios/
+
+# Test cache
+.jest-cache/

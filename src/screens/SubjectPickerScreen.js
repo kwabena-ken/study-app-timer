@@ -5,12 +5,12 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
-import { loadSubjects } from "../utils/storage";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { loadSubjects, MAX_NAME_LENGTH } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import Icon from "../components/Icon";
@@ -49,7 +49,7 @@ export default function SubjectPickerScreen({ onSelectSubject, onGoHome }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom", "left", "right"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -82,6 +82,7 @@ export default function SubjectPickerScreen({ onSelectSubject, onGoHome }) {
               onChangeText={setText}
               onSubmitEditing={handleSubmit}
               returnKeyType="next"
+              maxLength={MAX_NAME_LENGTH}
               autoFocus
             />
           </View>

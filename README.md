@@ -10,7 +10,9 @@ Built with Expo + React Native.
 ## Features
 
 - **Guided sessions** — ready-made 1-hour and 2-hour study plans with alternating
-  study phases and breaks, each with a suggested activity tip.
+  study phases and breaks, each with a suggested activity tip. Durations include
+  breaks: the 1-hour plan has 51 study minutes and 9 break minutes; the 2-hour plan
+  has 110 study minutes and 10 break minutes.
 - **Custom session builder** — set a total time, add study/break tags (presets or your
   own), and fine-tune each phase's duration with sliders and steppers. Sessions cannot
   start or be saved until all selected minutes are assigned, with a one-tap option to
@@ -41,7 +43,9 @@ Built with Expo + React Native.
 - **Refresh and recovery states** — pull to refresh Home, History, and Stats, with
   explicit retry actions when local data cannot be loaded.
 - **Accessibility** — icon-only controls and toggles expose screen-reader labels and
-  state.
+  state. The custom builder includes labeled inputs, task-specific slider values
+  in minutes, and larger touch targets. Theme options wrap on smaller screens,
+  and the bottom tab bar adapts to device safe-area insets.
 
 ## Tech stack
 

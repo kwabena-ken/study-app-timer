@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { loadSessions, saveSession } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
@@ -24,39 +24,55 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
 
   const phases = session?.phases || [];
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [currentStreak, setCurrentStreak] = useState(null);
   const didSaveRef = useRef(false);
+
+  const performSave = useCallback(async () => {
+    setIsSaving(true);
+    setSaveError(false);
+    try {
+      const studyPhases = phases.filter((p) => !p.isBreak);
+      const totalStudyMins = studyPhases.reduce((a, p) => a + p.duration, 0);
+
+      await saveSession({
+        sessionType: sessionMeta?.sessionKey || "unknown",
+        label: session.label,
+        subject: sessionMeta?.subject || "Unspecified",
+        startedAt: sessionMeta?.startedAt || new Date().toISOString(),
+        phasesCompleted: studyPhases.length,
+        totalStudyMins,
+        actualStudyMins:
+          sessionMeta?.actualStudyMins != null
+            ? sessionMeta.actualStudyMins
+            : totalStudyMins,
+        completed: true,
+      });
+
+      const sessions = await loadSessions();
+      setCurrentStreak(computeStreak(sessions).current);
+      setSaved(true);
+      setSaveError(false);
+    } catch (e) {
+      console.warn("Failed to save session:", e);
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [session, sessionMeta, phases]);
 
   // Save session to local storage (runs once on mount)
   useEffect(() => {
     if (didSaveRef.current) return;
     didSaveRef.current = true;
-
-    const studyPhases = phases.filter((p) => !p.isBreak);
-    const totalStudyMins = studyPhases.reduce((a, p) => a + p.duration, 0);
-
-    saveSession({
-      sessionType: sessionMeta?.sessionKey || "unknown",
-      label: session.label,
-      subject: sessionMeta?.subject || "Unspecified",
-      startedAt: sessionMeta?.startedAt || new Date().toISOString(),
-      phasesCompleted: studyPhases.length,
-      totalStudyMins,
-      actualStudyMins: sessionMeta?.actualStudyMins != null ? sessionMeta.actualStudyMins : totalStudyMins,
-      completed: true,
-    })
-      .then(() => loadSessions())
-      .then((sessions) => {
-        setCurrentStreak(computeStreak(sessions).current);
-        setSaved(true);
-      })
-      .catch((e) => console.warn("Failed to save session:", e));
-  }, [session, sessionMeta, phases]);
+    performSave();
+  }, [performSave]);
 
   const subjectName = sessionMeta?.subject;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom", "left", "right"]}>
       <View style={styles.wrap}>
         <Text style={styles.emoji}>🎉</Text>
         <Text style={styles.title}>Session Complete!</Text>
@@ -82,6 +98,28 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
               </View>
             ))}
         </View>
+
+        {saveError && (
+          <View style={styles.warningBanner} accessibilityRole="alert">
+            <View style={styles.warningBannerContent}>
+              <Icon name="close" size={16} color={theme.danger} />
+              <Text style={styles.warningText}>
+                Failed to save session to history.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={performSave}
+              disabled={isSaving}
+              accessibilityRole="button"
+              accessibilityLabel="Retry Save"
+            >
+              <Text style={styles.retryButtonText}>
+                {isSaving ? "Saving..." : "Retry Save"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {saved && (
           <>
@@ -180,4 +218,39 @@ const makeStyles = (t) =>
       paddingHorizontal: 34,
     },
     homeButtonText: { color: t.onAccent, fontSize: 14, fontFamily: FONTS.bodyBold },
+    warningBanner: {
+      backgroundColor: t.surface,
+      borderWidth: 1.5,
+      borderColor: t.danger,
+      borderRadius: 12,
+      padding: 14,
+      marginTop: 8,
+      marginBottom: 16,
+      width: "100%",
+      maxWidth: 300,
+      alignItems: "center",
+      gap: 10,
+    },
+    warningBannerContent: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    warningText: {
+      color: t.danger,
+      fontSize: 13,
+      fontFamily: FONTS.bodyMedium,
+      flexShrink: 1,
+    },
+    retryButton: {
+      backgroundColor: t.danger,
+      borderRadius: 8,
+      paddingVertical: 8,
+      paddingHorizontal: 18,
+    },
+    retryButtonText: {
+      color: "#ffffff",
+      fontSize: 13,
+      fontFamily: FONTS.bodyBold,
+    },
   });

@@ -6,6 +6,18 @@ describe("SESSIONS templates", () => {
     expect(SESSIONS["2hr"].label).toBe("2-Hour Session");
   });
 
+  it.each([
+    ["1hr", [10, 24, 12, 5], 9, 60],
+    ["2hr", [10, 35, 30, 20, 15], 10, 120],
+  ])("%s includes breaks in its advertised duration", (key, studyDurations, breakMins, totalMins) => {
+    const { phases } = SESSIONS[key];
+    expect(phases.filter((phase) => !phase.isBreak).map((phase) => phase.duration))
+      .toEqual(studyDurations);
+    expect(phases.filter((phase) => phase.isBreak).reduce((sum, phase) => sum + phase.duration, 0))
+      .toBe(breakMins);
+    expect(phases.reduce((sum, phase) => sum + phase.duration, 0)).toBe(totalMins);
+  });
+
   describe("1hr", () => {
     const phases = SESSIONS["1hr"].phases;
 

@@ -4,10 +4,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
@@ -15,6 +15,7 @@ import Icon from "../components/Icon";
 import WeeklyGoalCard from "../components/WeeklyGoalCard";
 import { loadSessions, loadSettings } from "../utils/storage";
 import { computeStreak, recentStudyDays } from "../utils/streak";
+import { SESSIONS } from "../constants/sessions";
 
 const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -52,8 +53,11 @@ function longDate(date) {
 }
 
 const QUICK_STARTS = [
-  { key: "1hr", label: "1 Hour", sub: "4 blocks" },
-  { key: "2hr", label: "2 Hours", sub: "5 blocks" },
+  ...Object.entries(SESSIONS).map(([key, session]) => ({
+    key,
+    label: formatMins(session.phases.reduce((sum, phase) => sum + phase.duration, 0)),
+    sub: "Incl. breaks",
+  })),
   { key: "custom", label: "Custom", sub: "Build it" },
 ];
 
@@ -143,7 +147,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
   const hasStreak = streak.current > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -282,7 +286,9 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
               onPress={() => onQuickStart(q.key)}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel={`Start ${q.label} session`}
+              accessibilityLabel={q.key === "custom"
+                ? "Build a custom session"
+                : `Start ${SESSIONS[q.key].label}, including breaks`}
             >
               <Text style={styles.chipLabel}>{q.label}</Text>
               <Text style={styles.chipSub}>{q.sub}</Text>

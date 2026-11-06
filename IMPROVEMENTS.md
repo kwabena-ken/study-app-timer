@@ -21,7 +21,7 @@ Status key: `PENDING`, `IN PROGRESS`, `COMPLETED`
 | 15 | Add recurring study reminders | PENDING |
 | 16 | Improve Android Back button navigation | PENDING |
 | 17 | Strengthen storage validation and data versioning | PENDING |
-| 18 | Prevent notification scheduling race conditions | PENDING |
+| 18 | Prevent notification scheduling race conditions | COMPLETED |
 | 19 | Add retry handling when completed sessions fail to save | PENDING |
 | 20 | Expand tests for timer behavior, notifications, navigation, and screens | PENDING |
 | 21 | Improve accessibility labels and live countdown announcements | PENDING |

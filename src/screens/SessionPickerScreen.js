@@ -4,10 +4,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { SESSIONS } from "../constants/sessions";
 import { loadTemplates, deleteTemplate } from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
@@ -38,7 +38,7 @@ function sumMins(phases, isBreak) {
  * Session picker screen — shows subject badge, saved templates, and session
  * type cards.
  *
- * @param {{ subject: string, subjectColor: string, onStartSession: (key: string) => void, onOpenCustomSession: () => void, onStartTemplate: (template: Object) => void, onGoBack: () => void }} props
+ * @param {{ subject: string, subjectColor: string, onStartSession: (key: string) => void, onOpenCustomSession: () => void, onStartTemplate: (template: Object) => void, onEditTemplate: (template: Object) => void, onGoBack: () => void }} props
  */
 export default function SessionPickerScreen({
   subject,
@@ -46,6 +46,7 @@ export default function SessionPickerScreen({
   onStartSession,
   onOpenCustomSession,
   onStartTemplate,
+  onEditTemplate,
   onGoBack,
 }) {
   const { theme } = useTheme();
@@ -78,7 +79,7 @@ export default function SessionPickerScreen({
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom", "left", "right"]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -134,14 +135,24 @@ export default function SessionPickerScreen({
                       </Text>
                     </View>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.templateDelete}
-                    onPress={() => handleDeleteTemplate(tpl)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Delete template ${tpl.label}`}
-                  >
-                    <Icon name="trash" size={18} color={theme.textMuted} />
-                  </TouchableOpacity>
+                  <View style={styles.templateActions}>
+                    <TouchableOpacity
+                      style={styles.templateEdit}
+                      onPress={() => onEditTemplate(tpl)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit template ${tpl.label}`}
+                    >
+                      <Icon name="edit" size={18} color={theme.textMuted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.templateDelete}
+                      onPress={() => handleDeleteTemplate(tpl)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete template ${tpl.label}`}
+                    >
+                      <Icon name="trash" size={18} color={theme.textMuted} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             })}
@@ -158,8 +169,13 @@ export default function SessionPickerScreen({
               key={key}
               style={styles.card}
               onPress={() => onStartSession(key)}
+              accessibilityRole="button"
+              accessibilityLabel={`Start ${s.label}, ${studyMins + breakMins} minutes total, ${studyMins} minutes study and ${breakMins} minutes breaks`}
             >
               <Text style={styles.cardTitle}>{s.label}</Text>
+              <Text style={styles.cardMeta}>
+                {studyMins + breakMins}m total, including breaks
+              </Text>
               <Text style={styles.cardMeta}>
                 {studyMins}m study · {breakMins}m breaks
               </Text>
@@ -280,9 +296,21 @@ const makeStyles = (t) =>
       paddingRight: 8,
     },
     templateEmoji: { marginRight: 12 },
+    templateActions: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    templateEdit: {
+      width: 48,
+      height: 48,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     templateDelete: {
-      paddingHorizontal: 16,
-      paddingVertical: 18,
+      width: 48,
+      height: 48,
+      alignItems: "center",
+      justifyContent: "center",
     },
     card: {
       backgroundColor: t.surface,
