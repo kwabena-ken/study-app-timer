@@ -4,10 +4,8 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Switch,
-  Alert,
   TextInput,
 } from "react-native";
 import {
@@ -20,10 +18,12 @@ import {
   deleteSubject,
   moveSubject,
 } from "../utils/storage";
+import { confirmDialog, alertDialog } from "../utils/confirm";
 import { useAlarmSound } from "../hooks/useAlarmSound";
 import { useTheme } from "../theme/ThemeContext";
 import { THEME_OPTIONS } from "../theme/themes";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 
 const SOUND_OPTIONS = [
@@ -95,16 +95,14 @@ export default function SettingsScreen({ onGoHome }) {
     });
   }, []);
 
-  // Update a single setting field and persist
+  // Update a single setting field and persist ONLY that key so ThemeContext
+  // updates are never overwritten by a stale local settings object.
   const updateSetting = useCallback(async (key, value) => {
-    setSettingsState((prev) => {
-      const updated = { ...prev, [key]: value };
-      saveSettings(updated);
-      return updated;
-    });
+    setSettingsState((prev) => ({ ...prev, [key]: value }));
+    await saveSettings({ [key]: value });
   }, []);
 
-  // Test sound preview
+  // Test sound preview — resets playing state automatically when playback ends.
   const handleTestSound = useCallback(
     async (presetKey) => {
       if (playingPreset === presetKey) {
@@ -112,11 +110,22 @@ export default function SettingsScreen({ onGoHome }) {
         setPlayingPreset(null);
       } else {
         setPlayingPreset(presetKey);
-        await playAlarm(presetKey);
+        await playAlarm(presetKey, {
+          onFinish: () => {
+            setPlayingPreset((curr) => (curr === presetKey ? null : curr));
+          },
+        });
       }
     },
     [playingPreset, playAlarm, stopAlarm]
   );
+
+  // Stop any playing sound preview when navigating away from Settings.
+  useEffect(() => {
+    return () => {
+      stopAlarm();
+    };
+  }, [stopAlarm]);
 
   const handleRenameSubject = useCallback(async () => {
     const nextName = subjectName.trim();
@@ -131,7 +140,7 @@ export default function SettingsScreen({ onGoHome }) {
       setEditingSubject(null);
       setSubjectName("");
     } catch (error) {
-      Alert.alert("Could Not Rename", error.message || "Please try another name.");
+      alertDialog("Could Not Rename", error.message || "Please try another name.");
     }
   }, [editingSubject, subjectName]);
 
@@ -147,26 +156,20 @@ export default function SettingsScreen({ onGoHome }) {
     setSubjects(updated);
   }, []);
 
-  const handleDeleteSubject = useCallback((name) => {
-    Alert.alert(
-      "Delete Subject?",
-      `Remove “${name}” from your subject picker? Existing session history will be kept.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteSubject(name);
-            setSubjects((prev) => prev.filter((s) => s.name !== name));
-          },
-        },
-      ]
-    );
+  const handleDeleteSubject = useCallback(async (name) => {
+    const confirmed = await confirmDialog({
+      title: "Delete Subject?",
+      message: `Remove “${name}” from your subject picker? Existing session history will be kept.`,
+      confirmText: "Delete",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await deleteSubject(name);
+    setSubjects((prev) => prev.filter((s) => s.name !== name));
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>SETTINGS</Text>
@@ -544,7 +547,7 @@ export default function SettingsScreen({ onGoHome }) {
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -680,9 +683,16 @@ const makeStyles = (t) =>
     },
     toggleTitle: { color: t.textPrimary, fontSize: 14, fontFamily: FONTS.bodySemibold },
     toggleDesc: { color: t.textMuted, fontSize: 11, marginTop: 2, paddingRight: 12, fontFamily: FONTS.body },
-    themeRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+    themeRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      marginTop: 12,
+    },
     themePill: {
-      flex: 1,
+      flexGrow: 1,
+      flexBasis: "47%",
+      minWidth: "47%",
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
@@ -690,8 +700,9 @@ const makeStyles = (t) =>
       borderWidth: 1.5,
       borderColor: t.border,
       borderRadius: 12,
-      paddingVertical: 10,
-      paddingHorizontal: 8,
+      paddingVertical: 11,
+      paddingHorizontal: 10,
+      gap: 4,
     },
     themePillActive: {
       backgroundColor: t.surfaceActive,

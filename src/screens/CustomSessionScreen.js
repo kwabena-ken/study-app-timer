@@ -5,14 +5,14 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
-  Alert,
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import { saveTemplate } from "../utils/storage";
+import { alertDialog } from "../utils/confirm";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 
 const PRESET_TAGS = [
@@ -71,11 +71,16 @@ export default function CustomSessionScreen({
   }, [totalMins, allocatedMins]);
 
   const allocationComplete = allocatedMins === totalMins;
+  const hasStudyTask = useMemo(
+    () => tasks.some((t) => !t.isBreak),
+    [tasks]
+  );
 
-  // Handle changing total session duration
+  // Handle changing total session duration (commits, clamps, and proportionally scales tasks)
   const handleSetTotalMins = useCallback(
     (mins) => {
-      const validMins = Math.max(tasks.length, Math.min(480, mins || 1));
+      const minAllowed = Math.max(1, tasks.length);
+      const validMins = Math.max(minAllowed, Math.min(480, mins || 1));
       setTotalMins(validMins);
       setCustomTotalInput(String(validMins));
 
@@ -99,6 +104,16 @@ export default function CustomSessionScreen({
     },
     [tasks.length]
   );
+
+  // Commit typed total minutes when editing finishes (blur / keyboard submit).
+  const commitCustomTotalInput = useCallback(() => {
+    const parsed = parseInt(customTotalInput, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      setCustomTotalInput(String(totalMins));
+      return;
+    }
+    handleSetTotalMins(parsed);
+  }, [customTotalInput, totalMins, handleSetTotalMins]);
 
   // Add a task (preset or custom)
   const handleAddTask = useCallback(
@@ -215,15 +230,22 @@ export default function CustomSessionScreen({
   // Start the custom session
   const handleStart = useCallback(() => {
     if (tasks.length === 0) {
-      Alert.alert("No Tasks", "Please add at least one study task or break to your session.");
+      alertDialog("No Tasks", "Please add at least one study task to your session.");
+      return;
+    }
+
+    if (!hasStudyTask) {
+      alertDialog(
+        "Study Task Required",
+        "Add at least one study task (not just breaks) before starting."
+      );
       return;
     }
 
     if (!allocationComplete) {
-      Alert.alert(
+      alertDialog(
         "Time Still Unassigned",
-        `Assign all ${remainingMins} remaining minute${remainingMins === 1 ? "" : "s"} before starting.`,
-        [{ text: "OK" }]
+        `Assign all ${remainingMins} remaining minute${remainingMins === 1 ? "" : "s"} before starting.`
       );
       return;
     }
@@ -232,20 +254,27 @@ export default function CustomSessionScreen({
       label: `Custom Session (${totalMins}m)`,
       phases: buildPhases(),
     });
-  }, [tasks, totalMins, allocationComplete, remainingMins, buildPhases, onStartCustomSession]);
+  }, [tasks, hasStudyTask, totalMins, allocationComplete, remainingMins, buildPhases, onStartCustomSession]);
 
   // Save the built session as a reusable template
   const handleSaveTemplate = useCallback(async () => {
     if (tasks.length === 0) {
-      Alert.alert("Nothing to Save", "Add at least one study task or break before saving a template.");
+      alertDialog("Nothing to Save", "Add at least one study task before saving a template.");
+      return;
+    }
+
+    if (!hasStudyTask) {
+      alertDialog(
+        "Study Task Required",
+        "Add at least one study task (not just breaks) before saving a template."
+      );
       return;
     }
 
     if (!allocationComplete) {
-      Alert.alert(
+      alertDialog(
         "Time Still Unassigned",
-        "Assign all session minutes before saving this template.",
-        [{ text: "OK" }]
+        "Assign all session minutes before saving this template."
       );
       return;
     }
@@ -253,17 +282,17 @@ export default function CustomSessionScreen({
     const label = templateName.trim() || `Custom Session (${totalMins}m)`;
     try {
       await saveTemplate({ label, phases: buildPhases() });
-      Alert.alert(
+      alertDialog(
         "Template Saved",
         `"${label}" is now under Your Templates on the session picker.`
       );
     } catch (e) {
-      Alert.alert("Save Failed", "Could not save the template. Please try again.");
+      alertDialog("Save Failed", "Could not save the template. Please try again.");
     }
-  }, [tasks, templateName, totalMins, allocationComplete, buildPhases]);
+  }, [tasks, hasStudyTask, templateName, totalMins, allocationComplete, buildPhases]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -325,12 +354,25 @@ export default function CustomSessionScreen({
               keyboardType="number-pad"
               value={customTotalInput}
               onChangeText={(val) => {
-                setCustomTotalInput(val);
-                const parsed = parseInt(val, 10);
-                if (!isNaN(parsed) && parsed > 0) {
-                  handleSetTotalMins(parsed);
+                // Allow free numeric typing without mutating input mid-keystroke;
+                // only update totalMins live when non-destructive (>= allocatedMins).
+                const digitsOnly = val.replace(/[^0-9]/g, "");
+                setCustomTotalInput(digitsOnly);
+                const parsed = parseInt(digitsOnly, 10);
+                const minAllowed = Math.max(1, tasks.length);
+                if (
+                  !Number.isNaN(parsed) &&
+                  parsed >= minAllowed &&
+                  parsed >= allocatedMins &&
+                  parsed <= 480
+                ) {
+                  setTotalMins(parsed);
                 }
               }}
+              onBlur={commitCustomTotalInput}
+              onSubmitEditing={commitCustomTotalInput}
+              returnKeyType="done"
+              accessibilityLabel="Custom total session minutes"
             />
             <Text style={styles.unitText}>mins</Text>
           </View>
@@ -433,6 +475,12 @@ export default function CustomSessionScreen({
             </Text>
           )}
 
+          {tasks.length > 0 && !hasStudyTask && (
+            <Text style={styles.overAllocatedHint}>
+              Add at least one study task (not just breaks) to start or save.
+            </Text>
+          )}
+
           {tasks.length === 0 ? (
             <Text style={styles.emptyTasksText}>No tasks added yet. Tap a tag above to add one!</Text>
           ) : (
@@ -503,11 +551,11 @@ export default function CustomSessionScreen({
           <TouchableOpacity
             style={[
               styles.saveTemplateBtn,
-              (tasks.length === 0 || !allocationComplete) &&
+              (tasks.length === 0 || !hasStudyTask || !allocationComplete) &&
                 styles.saveTemplateBtnDisabled,
             ]}
             onPress={handleSaveTemplate}
-            disabled={tasks.length === 0 || !allocationComplete}
+            disabled={tasks.length === 0 || !hasStudyTask || !allocationComplete}
             accessibilityRole="button"
             accessibilityLabel="Save as template"
           >
@@ -520,13 +568,16 @@ export default function CustomSessionScreen({
         <TouchableOpacity
           style={[
             styles.startBtn,
-            (tasks.length === 0 || !allocationComplete) && styles.startBtnDisabled,
+            (tasks.length === 0 || !hasStudyTask || !allocationComplete) &&
+              styles.startBtnDisabled,
           ]}
           onPress={handleStart}
-          disabled={tasks.length === 0 || !allocationComplete}
+          disabled={tasks.length === 0 || !hasStudyTask || !allocationComplete}
           accessibilityRole="button"
           accessibilityLabel={
-            allocationComplete
+            !hasStudyTask
+              ? "Add at least one study task before starting"
+              : allocationComplete
               ? `Start custom session for ${totalMins} minutes`
               : "Assign all session minutes before starting"
           }
@@ -535,7 +586,7 @@ export default function CustomSessionScreen({
           <Text style={styles.startBtnText}>Start Custom Session ({totalMins}m)</Text>
         </TouchableOpacity>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

@@ -178,6 +178,82 @@ export async function moveSubject(name, direction) {
 // ────────────────────────────────────────────
 
 /**
+ * Save or update a session record by id.
+ * If a record with matching `id` already exists, updates it in place (without
+ * creating duplicates); otherwise prepends a new record so newest come first.
+ * Also ensures the subject exists in the subjects list.
+ *
+ * @param {Object} params
+ * @param {string} [params.id]             - Optional stable session id for upsert
+ * @param {string} params.sessionType      - "1hr", "2hr", or "custom"
+ * @param {string} params.label            - e.g. "1-Hour Session"
+ * @param {string} params.subject          - e.g. "Biology"
+ * @param {string} params.startedAt        - ISO timestamp
+ * @param {string} [params.completedAt]    - ISO timestamp (defaults to now)
+ * @param {number} params.phasesCompleted  - number of study phases completed
+ * @param {number} params.totalStudyMins   - total study minutes in the template
+ * @param {number} [params.actualStudyMins] - actual minutes studied
+ * @param {boolean} [params.completed=true] - whether the session was fully completed
+ */
+export async function upsertSession({
+  id,
+  sessionType,
+  label,
+  subject,
+  startedAt,
+  completedAt,
+  phasesCompleted,
+  totalStudyMins,
+  actualStudyMins,
+  completed = true,
+}) {
+  const normalizedSubject =
+    typeof subject === "string" && subject.trim()
+      ? subject.trim()
+      : "Unspecified";
+
+  // Ensure the subject exists in our subjects list (locks SUBJECTS_KEY).
+  const savedSubject = await saveSubject(normalizedSubject);
+  const resolvedSubject = savedSubject?.name || normalizedSubject;
+
+  const recordId = id || generateId();
+  const timestamp = completedAt || new Date().toISOString();
+
+  // Serialize the sessions read-modify-write on STORAGE_KEY.
+  return withKeyLock(STORAGE_KEY, async () => {
+    const existing = await loadSessions();
+    const index = existing.findIndex((s) => s.id === recordId);
+
+    const baseRecord = {
+      id: recordId,
+      sessionType,
+      label,
+      subject: resolvedSubject,
+      startedAt: startedAt || (index >= 0 ? existing[index].startedAt : timestamp),
+      completedAt: timestamp,
+      phasesCompleted,
+      totalStudyMins,
+      actualStudyMins: actualStudyMins != null ? actualStudyMins : totalStudyMins,
+      completed,
+    };
+
+    let updated;
+    let storedRecord;
+    if (index >= 0) {
+      storedRecord = { ...existing[index], ...baseRecord, id: recordId };
+      updated = [...existing];
+      updated[index] = storedRecord;
+    } else {
+      storedRecord = baseRecord;
+      updated = [storedRecord, ...existing];
+    }
+
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    return storedRecord;
+  });
+}
+
+/**
  * Save a completed or partial session record to local storage.
  * Prepends to the existing array so newest sessions come first.
  * Also ensures the subject is saved to the subjects list.
@@ -202,28 +278,16 @@ export async function saveSession({
   actualStudyMins,
   completed = true,
 }) {
-  const record = {
+  return upsertSession({
     id: generateId(),
     sessionType,
     label,
-    subject: subject || "Unspecified",
+    subject,
     startedAt,
-    completedAt: new Date().toISOString(),
     phasesCompleted,
     totalStudyMins,
-    actualStudyMins: actualStudyMins != null ? actualStudyMins : totalStudyMins,
+    actualStudyMins,
     completed,
-  };
-
-  // Ensure the subject exists in our subjects list (locks SUBJECTS_KEY).
-  await saveSubject(record.subject);
-
-  // Serialize the sessions read-modify-write on STORAGE_KEY.
-  return withKeyLock(STORAGE_KEY, async () => {
-    const existing = await loadSessions();
-    const updated = [record, ...existing];
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    return record;
   });
 }
 
@@ -258,14 +322,24 @@ export async function deleteSession(id) {
 
 /**
  * Update fields on a single session record.
+ * Automatically registers newly entered subjects in the subjects list so
+ * inline History renames receive a color and appear in subject filter chips.
  *
  * @param {string} id - The session id to update
  * @param {Object} updates - Fields to merge into the record
  */
 export async function updateSession(id, updates) {
+  let nextUpdates = updates;
+  if (updates && typeof updates.subject === "string" && updates.subject.trim()) {
+    const saved = await saveSubject(updates.subject.trim());
+    nextUpdates = { ...updates, subject: saved?.name || updates.subject.trim() };
+  }
+
   return withKeyLock(STORAGE_KEY, async () => {
     const sessions = await loadSessions();
-    const updated = sessions.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    const updated = sessions.map((s) =>
+      s.id === id ? { ...s, ...nextUpdates } : s
+    );
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   });
 }
@@ -274,7 +348,85 @@ export async function updateSession(id, updates) {
  * Delete all saved session records.
  */
 export async function clearSessions() {
-  await AsyncStorage.removeItem(STORAGE_KEY);
+  return withKeyLock(STORAGE_KEY, async () => {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  });
+}
+
+// ────────────────────────────────────────────
+//  Active session checkpoint (Option A recovery)
+// ────────────────────────────────────────────
+
+const ACTIVE_SESSION_KEY = "@study_timer/active_session";
+
+/**
+ * Persist a snapshot of the currently active/paused session so study progress
+ * survives background termination or reloads and can auto-resume cleanly.
+ *
+ * @param {Object} snapshot
+ */
+export async function saveActiveSession(snapshot) {
+  return withKeyLock(ACTIVE_SESSION_KEY, async () => {
+    await AsyncStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(snapshot));
+    return snapshot;
+  });
+}
+
+/**
+ * Load the persisted active session snapshot, or null if none exists.
+ *
+ * @returns {Promise<Object | null>}
+ */
+export async function loadActiveSession() {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVE_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn("Failed to load active session:", e);
+    return null;
+  }
+}
+
+/**
+ * Clear the persisted active session snapshot once finished or explicitly left.
+ */
+export async function clearActiveSession() {
+  return withKeyLock(ACTIVE_SESSION_KEY, async () => {
+    await AsyncStorage.removeItem(ACTIVE_SESSION_KEY);
+  });
+}
+
+/**
+ * Best-effort synchronous Web flush for `pagehide` / `beforeunload` handlers
+ * where async Promise microtasks may not finish before the tab unloads.
+ * No-op on native platforms (where AsyncStorage is used via AppState).
+ *
+ * @param {Object | null} snapshot
+ * @param {Object | null} sessionRecord
+ */
+export function flushWebSessionSync(snapshot, sessionRecord) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    if (snapshot) {
+      window.localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(snapshot));
+    }
+    if (sessionRecord && sessionRecord.id) {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const existing = raw ? JSON.parse(raw) : [];
+      const index = existing.findIndex((s) => s.id === sessionRecord.id);
+      const updated =
+        index >= 0
+          ? existing.map((s, i) =>
+              i === index
+                ? { ...s, ...sessionRecord, id: sessionRecord.id }
+                : s
+            )
+          : [sessionRecord, ...existing];
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    }
+  } catch {
+    // Ignore storage errors during page unload.
+  }
 }
 
 // ────────────────────────────────────────────

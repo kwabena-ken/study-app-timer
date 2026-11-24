@@ -4,14 +4,14 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
-  Alert,
 } from "react-native";
 import { SESSIONS } from "../constants/sessions";
 import { loadTemplates, deleteTemplate } from "../utils/storage";
+import { confirmDialog } from "../utils/confirm";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 
 /**
@@ -58,27 +58,21 @@ export default function SessionPickerScreen({
     loadTemplates().then(setTemplates);
   });
 
-  // ── Delete a saved template (with confirmation) ──
-  const handleDeleteTemplate = useCallback((tpl) => {
-    Alert.alert(
-      "Delete Template?",
-      `Remove "${tpl.label}" from your saved templates?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteTemplate(tpl.id);
-            setTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
-          },
-        },
-      ]
-    );
+  // ── Delete a saved template (with cross-platform confirmation) ──
+  const handleDeleteTemplate = useCallback(async (tpl) => {
+    const confirmed = await confirmDialog({
+      title: "Delete Template?",
+      message: `Remove "${tpl.label}" from your saved templates?`,
+      confirmText: "Delete",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await deleteTemplate(tpl.id);
+    setTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -205,7 +199,7 @@ export default function SessionPickerScreen({
           </View>
         </TouchableOpacity>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

@@ -4,17 +4,18 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 import WeeklyGoalCard from "../components/WeeklyGoalCard";
 import { loadSessions, loadSettings } from "../utils/storage";
 import { computeStreak, recentStudyDays } from "../utils/streak";
+import { formatStudyDuration } from "../utils/studyTime";
 
 const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -25,15 +26,6 @@ function shade(hex, factor) {
     .toString(16)
     .padStart(2, "0");
   return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`;
-}
-
-/** Round a minute count to "Xm" / "Xh" / "Xh Ym". */
-function formatMins(mins) {
-  const m = Math.round(mins || 0);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const r = m % 60;
-  return r ? `${h}h ${r}m` : `${h}h`;
 }
 
 function greeting(hour) {
@@ -75,6 +67,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
 
   const [sessions, setSessions] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [now, setNow] = useState(() => new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
@@ -87,6 +80,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
       ]);
       setSessions(savedSessions);
       setSettings(savedSettings);
+      setNow(new Date());
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -99,20 +93,23 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
     refreshSessions();
   }, [refreshSessions]);
 
-  const now = useMemo(() => new Date(), []);
   const list = sessions || [];
 
-  const streak = useMemo(() => computeStreak(list, now), [sessions]);
-  const week = useMemo(() => recentStudyDays(list, 7, now), [sessions]);
+  const streak = useMemo(() => computeStreak(list, now), [sessions, now]);
+  const week = useMemo(() => recentStudyDays(list, 7, now), [sessions, now]);
 
-  // Focus-minute recap (matches Stats: actual studied minutes, partials count).
+  // Focus-minute recap (matches Stats: actual studied minutes, 7 local calendar days).
   const recap = useMemo(() => {
-    const startToday = new Date(
+    const todayDate = new Date(
       now.getFullYear(),
       now.getMonth(),
       now.getDate()
-    ).getTime();
-    const startWeek = startToday - 6 * 24 * 60 * 60 * 1000;
+    );
+    const startToday = todayDate.getTime();
+    const weekStartDate = new Date(todayDate);
+    weekStartDate.setDate(weekStartDate.getDate() - 6);
+    const startWeek = weekStartDate.getTime();
+
     let todayMins = 0;
     let weekMins = 0;
     let weekSessions = 0;
@@ -127,7 +124,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
       }
     }
     return { todayMins, weekMins, weekSessions };
-  }, [sessions]);
+  }, [sessions, now]);
 
   // Weekday initials for the last 7 days, oldest → today.
   const dayLabels = useMemo(() => {
@@ -143,7 +140,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
   const hasStreak = streak.current > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -259,11 +256,11 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
         {/* ── Focus recap ── */}
         <View style={styles.statRow}>
           <View style={styles.statTile}>
-            <Text style={styles.statValue}>{formatMins(recap.todayMins)}</Text>
+            <Text style={styles.statValue}>{formatStudyDuration(recap.todayMins)}</Text>
             <Text style={styles.statLabel}>Today</Text>
           </View>
           <View style={styles.statTile}>
-            <Text style={styles.statValue}>{formatMins(recap.weekMins)}</Text>
+            <Text style={styles.statValue}>{formatStudyDuration(recap.weekMins)}</Text>
             <Text style={styles.statLabel}>This week</Text>
           </View>
           <View style={styles.statTile}>
@@ -290,7 +287,7 @@ export default function HomeScreen({ onStartStudying, onQuickStart }) {
           ))}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

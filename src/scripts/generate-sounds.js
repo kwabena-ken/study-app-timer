@@ -16,9 +16,9 @@ function createWavBuffer(numSamples, sampleGenerator) {
   buffer.writeUInt16LE(1, 20); // PCM
   buffer.writeUInt16LE(1, 22); // mono
   buffer.writeUInt32LE(SAMPLE_RATE, 24);
-  buffer.writeUInt32LE(SAMPLE_RATE * 2, 28);
-  buffer.writeUInt16LE(2, 30);
-  buffer.writeUInt16LE(16, 32);
+  buffer.writeUInt32LE(SAMPLE_RATE * 2, 28); // ByteRate = SampleRate * NumChannels * BitsPerSample / 8
+  buffer.writeUInt16LE(2, 32); // BlockAlign = NumChannels * BitsPerSample / 8
+  buffer.writeUInt16LE(16, 34); // BitsPerSample
   buffer.write("data", 36);
   buffer.writeUInt32LE(dataSize, 40);
 
