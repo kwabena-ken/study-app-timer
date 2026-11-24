@@ -4,22 +4,38 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
-  Alert,
   Vibration,
   Switch,
+  AppState,
+  BackHandler,
+  Platform,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { studyColors, breakColor } from "../constants/sessions";
 import { formatTime } from "../utils/formatTime";
-import { phaseElapsedSecs, minsFromSecs } from "../utils/studyTime";
+import {
+  phaseElapsedSecs,
+  minsFromSecs,
+  reconcileSessionTimeline,
+} from "../utils/studyTime";
+import { generateId } from "../utils/generateId";
+import { confirmDialog } from "../utils/confirm";
 import { useTimer } from "../hooks/useTimer";
 import { useNotifications } from "../hooks/useNotifications";
 import { useAlarmSound } from "../hooks/useAlarmSound";
-import { loadSettings, saveSettings } from "../utils/storage";
+import {
+  loadSettings,
+  saveSettings,
+  upsertSession,
+  deleteSession,
+  saveActiveSession,
+  clearActiveSession,
+  flushWebSessionSync,
+} from "../utils/storage";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import SessionDial from "../components/SessionDial";
 import Icon from "../components/Icon";
 
@@ -31,113 +47,274 @@ const ALARM_VIBRATION = [0, 500, 250, 500];
 const DIAL_GLOW = "#22d3ee";
 
 /**
- * Session screen — timer, controls, progress, and tips.
- * Owns its own timer/notification/sound lifecycle; cleans up on unmount.
- *
- * @param {{ session: Object, onGoHome: () => void, onComplete: (meta: Object) => void }} props
+ * Session screen — timer, controls, progress, tips, continuous checkpointing,
+ * wall-clock background reconciliation, and Option A auto-resume.
  */
-export default function SessionScreen({ session, subject, subjectColor, onGoHome, onComplete, onPartialQuit }) {
+export default function SessionScreen({
+  session,
+  sessionKey,
+  subject,
+  subjectColor,
+  resumeState,
+  onGoHome,
+  onComplete,
+  onPartialQuit,
+}) {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const phases = session.phases;
-  const [phaseIndex, setPhaseIndex] = useState(0);
+  const totalStudyMins = useMemo(
+    () =>
+      phases
+        .filter((p) => !p.isBreak)
+        .reduce((a, p) => a + (p.duration || 0), 0),
+    [phases]
+  );
+
+  const initialPhaseIndex = resumeState?.phaseIndex ?? 0;
+  const [phaseIndex, setPhaseIndex] = useState(initialPhaseIndex);
   const [showTip, setShowTip] = useState(false);
   const phase = phases[phaseIndex] || null;
 
   // Auto-advance: when on, a finished phase immediately starts the next one.
-  // Seeded from saved settings but toggleable live during the session.
-  const [autoAdvance, setAutoAdvance] = useState(true);
-  // Which bundled alarm sound plays for background/locked notifications.
+  // Seeded from resumeState (when resuming) or saved settings, toggleable live.
+  const [autoAdvance, setAutoAdvance] = useState(
+    resumeState?.autoAdvance != null ? resumeState.autoAdvance : true
+  );
+  // Which bundled alarm sound plays for foreground & background alarms.
   const [soundPreset, setSoundPreset] = useState("classic");
   // Honor the user's Settings toggles (seeded on; overwritten once settings load).
   const [vibrate, setVibrate] = useState(true);
   const [keepAwake, setKeepAwake] = useState(true);
 
-  // Track when the user first presses play (for session history)
-  const startedAtRef = useRef(null);
+  // Stable session id + start timestamp created on first Play (or restored via Option A).
+  const sessionIdRef = useRef(resumeState?.sessionId || null);
+  const startedAtRef = useRef(resumeState?.startedAt || null);
 
-  // Accumulates actual study seconds across all phases
-  // (only counts time actually elapsed, not skipped time)
-  const actualStudySecsRef = useRef(0);
+  // Accumulates banked study seconds from prior phases/resets (only real elapsed time).
+  const actualStudySecsRef = useRef(resumeState?.actualStudySecs || 0);
+  // Tracks study phases where >0s actually elapsed (never counts 0s-skipped phases).
+  const completedStudyPhasesRef = useRef(resumeState?.studyPhasesCompleted || 0);
+
+  // Guard so unmount / beforeunload doesn't re-create a checkpoint after Leave or Finish.
+  const finalizedRef = useRef(false);
+  const initializedRef = useRef(false);
+  const lastFlushedStudyMinsRef = useRef(null);
 
   const { scheduleChain, cancelAll } = useNotifications();
   const { playAlarm } = useAlarmSound();
 
-  // handlePhaseComplete (defined below) depends on goToPhase/finishSession,
-  // which in turn need the timer's controls — so route the timer's onComplete
-  // through a ref to break the definition-order cycle.
+  // Route the timer's completion callback through a ref to break definition-order cycle.
   const onCompleteRef = useRef(() => {});
-  const fireComplete = useCallback(() => onCompleteRef.current?.(), []);
+  const fireComplete = useCallback(
+    (finishedAtMs) => onCompleteRef.current?.(finishedAtMs),
+    []
+  );
 
-  const { secondsLeft, running, setRunning, loadDuration, stop, restart } =
-    useTimer({ onComplete: fireComplete });
+  const {
+    secondsLeft,
+    running,
+    setRunning,
+    loadDuration,
+    stop,
+    restart,
+    startWithTarget,
+    targetEndRef,
+  } = useTimer({ onComplete: fireComplete });
 
-  // Mirror live remaining time into a ref so the scheduling effect can read it
-  // without depending on `secondsLeft` (which would reschedule every tick).
-  const secondsLeftRef = useRef(0);
+  // Mirror live state into refs so async / AppState / unload callbacks never read stale values.
+  const secondsLeftRef = useRef(
+    resumeState?.secondsLeft ?? (phases[initialPhaseIndex]?.duration || 0) * 60
+  );
   secondsLeftRef.current = secondsLeft;
 
-  // Mirror the vibrate setting into a ref so the haptic helpers below stay
-  // stable (they never need to be recreated when the setting flips).
+  const runningRef = useRef(false);
+  runningRef.current = running;
+
+  const phaseIndexRef = useRef(phaseIndex);
+  phaseIndexRef.current = phaseIndex;
+
+  const autoAdvanceRef = useRef(autoAdvance);
+  autoAdvanceRef.current = autoAdvance;
+
+  const soundPresetRef = useRef(soundPreset);
+  soundPresetRef.current = soundPreset;
+
   const vibrateRef = useRef(true);
   vibrateRef.current = vibrate;
 
+  const getLiveSecondsLeft = useCallback(() => {
+    if (runningRef.current && targetEndRef.current != null) {
+      return Math.max(0, Math.ceil((targetEndRef.current - Date.now()) / 1000));
+    }
+    return secondsLeftRef.current;
+  }, [targetEndRef]);
+
+  // Build snapshot + draft history payload for checkpointing.
+  const buildCheckpointPayload = useCallback(
+    (overrides = {}) => {
+      if (!sessionIdRef.current || !startedAtRef.current) return null;
+
+      const idx = overrides.phaseIndex ?? phaseIndexRef.current;
+      const isRunning = overrides.running ?? runningRef.current;
+      const phaseEndMs =
+        overrides.phaseEndMs !== undefined
+          ? overrides.phaseEndMs
+          : isRunning
+          ? targetEndRef.current
+          : null;
+      const secsLeft =
+        overrides.secondsLeft !== undefined
+          ? overrides.secondsLeft
+          : isRunning && phaseEndMs != null
+          ? Math.max(0, Math.ceil((phaseEndMs - Date.now()) / 1000))
+          : secondsLeftRef.current;
+      const bankedSecs = overrides.actualStudySecs ?? actualStudySecsRef.current;
+      const completedPhases =
+        overrides.studyPhasesCompleted ?? completedStudyPhasesRef.current;
+      const autoAdv = overrides.autoAdvance ?? autoAdvanceRef.current;
+
+      const currentPhase = phases[idx];
+      const totalStudySecs = bankedSecs + phaseElapsedSecs(currentPhase, secsLeft);
+      const actualStudyMins = minsFromSecs(totalStudySecs);
+      const nowIso = new Date().toISOString();
+
+      const snapshot = {
+        sessionId: sessionIdRef.current,
+        sessionKey: sessionKey || null,
+        session,
+        subject: subject || null,
+        subjectColor: subjectColor || null,
+        startedAt: startedAtRef.current,
+        phaseIndex: idx,
+        secondsLeft: secsLeft,
+        running: isRunning,
+        phaseEndMs: isRunning ? phaseEndMs : null,
+        actualStudySecs: bankedSecs,
+        studyPhasesCompleted: completedPhases,
+        autoAdvance: autoAdv,
+        updatedAt: Date.now(),
+      };
+
+      const draftRecord = {
+        id: sessionIdRef.current,
+        sessionType: sessionKey || "custom",
+        label: session.label,
+        subject: subject || "Unspecified",
+        startedAt: startedAtRef.current,
+        completedAt: nowIso,
+        phasesCompleted: completedPhases,
+        totalStudyMins,
+        actualStudyMins,
+        completed: false,
+      };
+
+      return { snapshot, draftRecord, actualStudyMins };
+    },
+    [phases, session, sessionKey, subject, subjectColor, totalStudyMins, targetEndRef]
+  );
+
+  // Persist active session checkpoint and upsert draft History entry.
+  const checkpointProgress = useCallback(
+    (overrides = {}) => {
+      if (finalizedRef.current) return;
+      const payload = buildCheckpointPayload(overrides);
+      if (!payload) return;
+
+      lastFlushedStudyMinsRef.current = payload.actualStudyMins;
+      saveActiveSession(payload.snapshot).catch(() => {});
+      upsertSession(payload.draftRecord).catch(() => {});
+    },
+    [buildCheckpointPayload]
+  );
+
   // Haptic helpers — no-ops when the user turned Vibration off in Settings.
   const impact = useCallback(() => {
-    if (vibrateRef.current) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (vibrateRef.current && Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
   }, []);
   const selection = useCallback(() => {
-    if (vibrateRef.current) Haptics.selectionAsync();
+    if (vibrateRef.current && Platform.OS !== "web") {
+      Haptics.selectionAsync().catch(() => {});
+    }
   }, []);
 
-  // Load saved prefs (auto-advance default + chosen sound) once on mount.
+  // Load saved prefs once on mount (preserving resumeState.autoAdvance if present).
   useEffect(() => {
+    let mounted = true;
     loadSettings().then((s) => {
-      setAutoAdvance(s.autoAdvance !== false);
+      if (!mounted) return;
+      if (resumeState?.autoAdvance == null) {
+        setAutoAdvance(s.autoAdvance !== false);
+      }
       setSoundPreset(s.soundPreset || "classic");
       setVibrate(s.vibrate !== false);
       setKeepAwake(s.keepAwake !== false);
     });
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [resumeState]);
 
   // Hold a keep-awake lock only while the timer is actively running, and only
   // if the user left the setting on. Released on pause, toggle-off, or unmount.
   useEffect(() => {
-    if (running && keepAwake) {
-      activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+    if (running && keepAwake && Platform.OS !== "web") {
+      activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
       return () => {
         deactivateKeepAwake(KEEP_AWAKE_TAG);
       };
     }
   }, [running, keepAwake]);
 
-  // Load first phase duration on mount
+  // Initialize timer duration (or Option A wall-clock resume target) once on mount.
   useEffect(() => {
-    loadDuration(phases[0].duration * 60);
-  }, [loadDuration, phases]);
+    if (initializedRef.current) return;
+    initializedRef.current = true;
 
-  // Build the notification chain. The current phase always fires at its end;
-  // when auto-advance is on we also pre-schedule every subsequent phase
-  // boundary at cumulative offsets, so alarms still fire while the app is
-  // backgrounded (JS timers are frozen in the background).
+    if (resumeState?.running && resumeState?.phaseEndMs != null) {
+      startWithTarget(resumeState.phaseEndMs);
+    } else if (resumeState?.secondsLeft != null) {
+      loadDuration(resumeState.secondsLeft);
+    } else {
+      loadDuration((phases[0]?.duration || 0) * 60);
+    }
+  }, [loadDuration, startWithTarget, phases, resumeState]);
+
+  // Periodically flush draft study minutes as they advance (captures the very
+  // first >=1s study tick immediately, then every 0.1 min / ~6s while running).
+  useEffect(() => {
+    if (!running || finalizedRef.current || !sessionIdRef.current) return;
+    const totalSecs =
+      actualStudySecsRef.current + phaseElapsedSecs(phase, secondsLeft);
+    const currentMins = minsFromSecs(totalSecs);
+    if (currentMins > 0 && currentMins !== lastFlushedStudyMinsRef.current) {
+      checkpointProgress();
+    }
+  }, [running, secondsLeft, phase, checkpointProgress]);
+
+  // Build the wall-clock DATE notification chain for all upcoming phase ends.
   const buildChainItems = useCallback(() => {
     const current = phases[phaseIndex];
     if (!current) return [];
 
     const bodyFor = (completed, idx) => {
-      const upNext = phases[idx + 1];
-      return upNext
-        ? `"${completed.name}" done. Up next: ${upNext.emoji} ${upNext.name}.`
+      const upNextPhase = phases[idx + 1];
+      return upNextPhase
+        ? `"${completed.name}" done. Up next: ${upNextPhase.emoji} ${upNextPhase.name}.`
         : `"${completed.name}" done — session complete! 🎉`;
     };
 
-    let offset = secondsLeftRef.current;
+    let targetMs =
+      targetEndRef.current != null
+        ? targetEndRef.current
+        : Date.now() + secondsLeftRef.current * 1000;
+
     const items = [
       {
-        seconds: offset,
+        targetMs,
         title: "Study Timer ⏰",
         body: bodyFor(current, phaseIndex),
       },
@@ -145,30 +322,36 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
 
     if (autoAdvance) {
       for (let i = phaseIndex + 1; i < phases.length; i++) {
-        offset += phases[i].duration * 60;
+        targetMs += phases[i].duration * 60 * 1000;
         items.push({
-          seconds: offset,
+          targetMs,
           title: "Study Timer ⏰",
           body: bodyFor(phases[i], i),
         });
       }
     }
     return items;
-  }, [phases, phaseIndex, autoAdvance]);
+  }, [phases, phaseIndex, autoAdvance, targetEndRef]);
 
   // ── (Re)schedule or cancel the notification chain ──
-  // Re-runs when the timer starts/stops, the phase changes, auto-advance is
-  // toggled, or the chosen sound changes.
   useEffect(() => {
     if (running) {
-      scheduleChain(buildChainItems(), soundPreset);
+      scheduleChain(buildChainItems(), soundPreset, { vibrate });
     } else {
       cancelAll();
     }
-  }, [running, phaseIndex, autoAdvance, soundPreset, buildChainItems, scheduleChain, cancelAll]);
+  }, [
+    running,
+    phaseIndex,
+    autoAdvance,
+    soundPreset,
+    vibrate,
+    buildChainItems,
+    scheduleChain,
+    cancelAll,
+  ]);
 
   // ── Per-phase identity color ──
-  // Study phases cycle through studyColors by their study-index; breaks are slate.
   const getPhaseColor = useCallback(
     (i) => {
       const p = phases[i];
@@ -181,7 +364,10 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
     [phases]
   );
 
-  const color = useMemo(() => getPhaseColor(phaseIndex), [getPhaseColor, phaseIndex]);
+  const color = useMemo(
+    () => getPhaseColor(phaseIndex),
+    [getPhaseColor, phaseIndex]
+  );
 
   const isBreakPhase = phase?.isBreak;
   const studyPhaseCount = phases.filter((p) => !p.isBreak).length;
@@ -190,163 +376,398 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
     .filter((p) => !p.isBreak).length;
   const upNext = phases[phaseIndex + 1] || null;
 
-  // ── Phase navigation ──
-  const goToPhase = useCallback(
-    (idx, autoStart = false) => {
-      // Accumulate actual study time from the current phase before switching
-      // (0 for breaks; only real elapsed time, not the full phase length).
-      actualStudySecsRef.current += phaseElapsedSecs(phase, secondsLeft);
+  // Finish the whole session (last phase done, or final phase skipped).
+  const finishSession = useCallback(
+    (overrideMeta = null) => {
+      if (finalizedRef.current) return;
+      finalizedRef.current = true;
 
+      let totalStudySecs;
+      let completedPhases;
+      let completedAt;
+
+      if (overrideMeta) {
+        totalStudySecs = overrideMeta.totalStudySecs;
+        completedPhases = overrideMeta.studyPhasesCompleted;
+        completedAt = overrideMeta.completedAt;
+      } else {
+        const currentPhase = phases[phaseIndexRef.current];
+        const elapsed = phaseElapsedSecs(currentPhase, getLiveSecondsLeft());
+        actualStudySecsRef.current += elapsed;
+        if (currentPhase && !currentPhase.isBreak && elapsed > 0) {
+          completedStudyPhasesRef.current += 1;
+        }
+        totalStudySecs = actualStudySecsRef.current;
+        completedPhases = completedStudyPhasesRef.current;
+        completedAt = new Date().toISOString();
+      }
+
+      stop();
+      cancelAll();
+      clearActiveSession().catch(() => {});
+
+      const actualStudyMins = minsFromSecs(totalStudySecs);
+      onComplete({
+        sessionId: sessionIdRef.current,
+        startedAt: startedAtRef.current,
+        completedAt,
+        actualStudyMins,
+        phasesCompleted: completedPhases,
+      });
+    },
+    [phases, getLiveSecondsLeft, stop, cancelAll, onComplete]
+  );
+
+  // Manual phase switch (skip forward). Only credits study phases where >0s elapsed.
+  const goToPhase = useCallback(
+    (idx, autoStart = false, explicitTargetEndMs = null) => {
+      const currentPhase = phases[phaseIndexRef.current];
+      const elapsed = phaseElapsedSecs(currentPhase, getLiveSecondsLeft());
+      actualStudySecsRef.current += elapsed;
+      if (currentPhase && !currentPhase.isBreak && elapsed > 0) {
+        completedStudyPhasesRef.current += 1;
+      }
+
+      phaseIndexRef.current = idx;
       setPhaseIndex(idx);
       setShowTip(false);
 
+      const nextDurSecs = (phases[idx]?.duration || 0) * 60;
       if (autoStart) {
-        // Roll straight into the next phase; the scheduling effect reschedules
-        // the notification chain off the new phaseIndex.
-        restart(phases[idx].duration * 60);
+        const nextEndMs = explicitTargetEndMs ?? Date.now() + nextDurSecs * 1000;
+        restart(nextDurSecs, nextEndMs);
+        checkpointProgress({
+          phaseIndex: idx,
+          running: true,
+          phaseEndMs: nextEndMs,
+          secondsLeft: Math.max(0, Math.ceil((nextEndMs - Date.now()) / 1000)),
+        });
       } else {
         cancelAll();
-        loadDuration(phases[idx].duration * 60);
+        loadDuration(nextDurSecs);
+        checkpointProgress({
+          phaseIndex: idx,
+          running: false,
+          phaseEndMs: null,
+          secondsLeft: nextDurSecs,
+        });
       }
     },
-    [cancelAll, loadDuration, restart, phases, phase, secondsLeft]
+    [phases, getLiveSecondsLeft, restart, cancelAll, loadDuration, checkpointProgress]
   );
 
-  // Finish the whole session (last phase done, or the final phase was skipped).
-  const finishSession = useCallback(() => {
-    actualStudySecsRef.current += phaseElapsedSecs(phase, secondsLeft);
-
-    stop();
-    cancelAll();
-
-    const actualStudyMins = minsFromSecs(actualStudySecsRef.current);
-    onComplete({ startedAt: startedAtRef.current, actualStudyMins });
-  }, [phase, secondsLeft, stop, cancelAll, onComplete]);
-
   const nextPhase = useCallback(() => {
-    if (phaseIndex + 1 < phases.length) {
-      goToPhase(phaseIndex + 1);
+    if (phaseIndexRef.current + 1 < phases.length) {
+      goToPhase(phaseIndexRef.current + 1);
     } else {
       finishSession();
     }
-  }, [phaseIndex, phases.length, goToPhase, finishSession]);
+  }, [phases.length, goToPhase, finishSession]);
 
-  // Called by the timer when a phase hits 0. Always sounds the alarm; when
-  // auto-advance is on, roll into the next phase (or finish the session).
-  const handlePhaseComplete = useCallback(() => {
-    playAlarm(soundPreset);
-    if (vibrateRef.current) Vibration.vibrate(ALARM_VIBRATION);
-    if (!autoAdvance) return;
-    if (phaseIndex + 1 < phases.length) {
-      goToPhase(phaseIndex + 1, true);
-    } else {
-      finishSession();
-    }
-  }, [playAlarm, soundPreset, autoAdvance, phaseIndex, phases.length, goToPhase, finishSession]);
+  // Reconcile wall-clock elapsed phases (used on timer completion AND foreground resume).
+  const reconcileRunningTimeline = useCallback(
+    (phaseEndMs, { playAlarmOnAdvance = true } = {}) => {
+      if (finalizedRef.current || phaseEndMs == null) return;
 
-  // Keep the timer's completion callback pointing at the latest closure.
+      const rec = reconcileSessionTimeline({
+        phases,
+        phaseIndex: phaseIndexRef.current,
+        phaseEndMs,
+        actualStudySecs: actualStudySecsRef.current,
+        studyPhasesCompleted: completedStudyPhasesRef.current,
+        autoAdvance: autoAdvanceRef.current,
+        nowMs: Date.now(),
+      });
+
+      if (rec.phasesAdvanced === 0) {
+        checkpointProgress({
+          phaseIndex: rec.phaseIndex,
+          running: true,
+          phaseEndMs: rec.phaseEndMs,
+          secondsLeft: rec.secondsLeft,
+        });
+        return;
+      }
+
+      if (playAlarmOnAdvance) {
+        playAlarm(soundPresetRef.current);
+        if (vibrateRef.current && Platform.OS !== "web") {
+          Vibration.vibrate(ALARM_VIBRATION);
+        }
+      }
+
+      actualStudySecsRef.current = rec.actualStudySecs;
+      completedStudyPhasesRef.current = rec.studyPhasesCompleted;
+
+      if (rec.completedAll) {
+        finishSession({
+          totalStudySecs: rec.totalStudySecs,
+          studyPhasesCompleted: rec.studyPhasesCompleted,
+          completedAt: rec.completedAtMs
+            ? new Date(rec.completedAtMs).toISOString()
+            : new Date().toISOString(),
+        });
+        return;
+      }
+
+      phaseIndexRef.current = rec.phaseIndex;
+      setPhaseIndex(rec.phaseIndex);
+      setShowTip(false);
+
+      if (rec.phaseEndedWaiting) {
+        cancelAll();
+        loadDuration(rec.secondsLeft);
+        checkpointProgress({
+          phaseIndex: rec.phaseIndex,
+          running: false,
+          phaseEndMs: null,
+          secondsLeft: rec.secondsLeft,
+          actualStudySecs: rec.actualStudySecs,
+          studyPhasesCompleted: rec.studyPhasesCompleted,
+        });
+        return;
+      }
+
+      // Still inside a subsequent phase with autoAdvance enabled — preserve exact wall-clock end.
+      restart(rec.secondsLeft, rec.phaseEndMs);
+      checkpointProgress({
+        phaseIndex: rec.phaseIndex,
+        running: true,
+        phaseEndMs: rec.phaseEndMs,
+        secondsLeft: rec.secondsLeft,
+        actualStudySecs: rec.actualStudySecs,
+        studyPhasesCompleted: rec.studyPhasesCompleted,
+      });
+    },
+    [phases, playAlarm, finishSession, cancelAll, loadDuration, restart, checkpointProgress]
+  );
+
+  // Called by useTimer whenever the current phase's wall-clock target expires.
+  const handlePhaseComplete = useCallback(
+    (finishedAtMs) => {
+      reconcileRunningTimeline(finishedAtMs ?? Date.now(), {
+        playAlarmOnAdvance: true,
+      });
+    },
+    [reconcileRunningTimeline]
+  );
+
   onCompleteRef.current = handlePhaseComplete;
 
-  const resetPhase = useCallback(() => {
-    cancelAll();
-    loadDuration(phase.duration * 60);
-  }, [cancelAll, loadDuration, phase]);
+  // Flush checkpoints on background/inactive and reconcile wall-clock time on foreground active.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (finalizedRef.current) return;
+      if (nextState === "background" || nextState === "inactive") {
+        checkpointProgress();
+      } else if (nextState === "active") {
+        if (runningRef.current && targetEndRef.current != null) {
+          reconcileRunningTimeline(targetEndRef.current, {
+            playAlarmOnAdvance: true,
+          });
+        }
+      }
+    });
+    return () => sub?.remove?.();
+  }, [checkpointProgress, reconcileRunningTimeline, targetEndRef]);
 
-  // ── Handlers with haptics & confirmation ──
+  // Web: synchronously flush active checkpoint + draft history on pagehide/beforeunload/visibilitychange.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
+    const handlePageHide = () => {
+      if (finalizedRef.current) return;
+      const payload = buildCheckpointPayload();
+      if (payload) {
+        flushWebSessionSync(payload.snapshot, payload.draftRecord);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (finalizedRef.current) return;
+      if (document.visibilityState === "hidden") {
+        handlePageHide();
+      } else if (document.visibilityState === "visible") {
+        if (runningRef.current && targetEndRef.current != null) {
+          reconcileRunningTimeline(targetEndRef.current, {
+            playAlarmOnAdvance: true,
+          });
+        }
+      }
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [buildCheckpointPayload, reconcileRunningTimeline, targetEndRef]);
+
+  // Flush progress if SessionScreen unmounts unexpectedly without finalizing.
+  useEffect(() => {
+    return () => {
+      if (!finalizedRef.current) {
+        const payload = buildCheckpointPayload();
+        if (payload) {
+          if (Platform.OS === "web") {
+            flushWebSessionSync(payload.snapshot, payload.draftRecord);
+          }
+          saveActiveSession(payload.snapshot).catch(() => {});
+          upsertSession(payload.draftRecord).catch(() => {});
+        }
+      }
+    };
+  }, [buildCheckpointPayload]);
+
+  const resetPhase = useCallback(() => {
+    if (!phase) return;
+    // Bank any study seconds already elapsed before resetting the current phase timer.
+    const elapsed = phaseElapsedSecs(phase, getLiveSecondsLeft());
+    if (elapsed > 0) {
+      actualStudySecsRef.current += elapsed;
+    }
+
+    const fullSecs = phase.duration * 60;
+    cancelAll();
+    loadDuration(fullSecs);
+    checkpointProgress({
+      running: false,
+      phaseEndMs: null,
+      secondsLeft: fullSecs,
+      actualStudySecs: actualStudySecsRef.current,
+    });
+  }, [phase, getLiveSecondsLeft, cancelAll, loadDuration, checkpointProgress]);
+
+  // ── Handlers with haptics & cross-platform confirmations ──
   const handlePlayPause = useCallback(() => {
     impact();
-    // Record the start time on the very first play press
-    if (!startedAtRef.current) {
-      startedAtRef.current = new Date().toISOString();
-    }
-    setRunning((r) => !r);
-  }, [impact, setRunning]);
-
-  const handleSkip = useCallback(() => {
-    if (running) {
-      Alert.alert(
-        "Skip Phase?",
-        "Are you sure you want to skip to the next phase?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Skip",
-            onPress: () => {
-              impact();
-              nextPhase();
-            },
-          },
-        ]
-      );
+    if (!runningRef.current) {
+      if (!sessionIdRef.current) {
+        sessionIdRef.current = generateId();
+      }
+      if (!startedAtRef.current) {
+        startedAtRef.current = new Date().toISOString();
+      }
+      const nextTargetMs = Date.now() + secondsLeftRef.current * 1000;
+      startWithTarget(nextTargetMs);
+      checkpointProgress({
+        running: true,
+        phaseEndMs: nextTargetMs,
+        secondsLeft: secondsLeftRef.current,
+      });
     } else {
-      impact();
-      nextPhase();
+      const remaining = getLiveSecondsLeft();
+      setRunning(false);
+      checkpointProgress({
+        running: false,
+        phaseEndMs: null,
+        secondsLeft: remaining,
+      });
     }
-  }, [impact, running, nextPhase]);
+  }, [impact, startWithTarget, setRunning, getLiveSecondsLeft, checkpointProgress]);
 
-  const handleReset = useCallback(() => {
+  const handleSkip = useCallback(async () => {
+    if (runningRef.current) {
+      const confirmed = await confirmDialog({
+        title: "Skip Phase?",
+        message: "Are you sure you want to skip to the next phase?",
+        confirmText: "Skip",
+      });
+      if (!confirmed) return;
+    }
+    impact();
+    nextPhase();
+  }, [impact, nextPhase]);
+
+  const handleReset = useCallback(async () => {
+    if (!phase) return;
+    const fullSecs = phase.duration * 60;
+    const isMidPhase = runningRef.current || getLiveSecondsLeft() < fullSecs;
+
+    if (isMidPhase) {
+      const confirmed = await confirmDialog({
+        title: "Reset Phase?",
+        message:
+          "Restart this phase timer from the beginning? Any study time already elapsed will still be saved.",
+        confirmText: "Reset",
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
+
     impact();
     resetPhase();
-  }, [impact, resetPhase]);
+  }, [phase, getLiveSecondsLeft, impact, resetPhase]);
 
   // Flip auto-advance live and persist the new default for next time.
   const toggleAutoAdvance = useCallback(() => {
     selection();
     setAutoAdvance((prev) => {
       const next = !prev;
+      autoAdvanceRef.current = next;
       saveSettings({ autoAdvance: next });
+      checkpointProgress({ autoAdvance: next });
       return next;
     });
-  }, [selection]);
+  }, [selection, checkpointProgress]);
 
-  const handleGoHome = useCallback(() => {
-    const doLeave = () => {
+  const handleGoHome = useCallback(async () => {
+    const doLeave = async () => {
+      finalizedRef.current = true;
+      const liveSecs = getLiveSecondsLeft();
       stop();
       cancelAll();
 
-      // Calculate actual study time for partial save. Use the same
-      // accumulated-elapsed basis as finishSession, so quitting credits exactly
-      // what a normal finish would for the same elapsed time — phases skipped
-      // early are not credited their full nominal length.
-      if (startedAtRef.current && onPartialQuit) {
-        const actualStudyMins = minsFromSecs(
-          actualStudySecsRef.current + phaseElapsedSecs(phase, secondsLeft)
-        );
+      const currentPhase = phases[phaseIndexRef.current];
+      const totalSecs =
+        actualStudySecsRef.current + phaseElapsedSecs(currentPhase, liveSecs);
+      const actualStudyMins = minsFromSecs(totalSecs);
 
-        const completedStudyPhases = phases
-          .slice(0, phaseIndex)
-          .filter((p) => !p.isBreak).length;
+      await clearActiveSession().catch(() => {});
 
-        if (actualStudyMins > 0) {
-          onPartialQuit({
-            startedAt: startedAtRef.current,
-            actualStudyMins,
-            phasesCompleted: completedStudyPhases,
-          });
-          return;
-        }
+      if (startedAtRef.current && actualStudyMins > 0 && onPartialQuit) {
+        onPartialQuit({
+          sessionId: sessionIdRef.current,
+          startedAt: startedAtRef.current,
+          actualStudyMins,
+          phasesCompleted: completedStudyPhasesRef.current,
+        });
+        return;
+      }
+
+      // Clean up any 0m draft created on Play before even 1s elapsed.
+      if (sessionIdRef.current) {
+        await deleteSession(sessionIdRef.current).catch(() => {});
       }
 
       onGoHome();
     };
 
-    if (running) {
-      Alert.alert(
-        "Leave Session?",
-        "Your timer is still running. Your progress will be saved.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Leave",
-            style: "destructive",
-            onPress: doLeave,
-          },
-        ]
-      );
-    } else {
-      doLeave();
+    if (runningRef.current) {
+      const confirmed = await confirmDialog({
+        title: "Leave Session?",
+        message: "Your timer is still running. Your progress will be saved.",
+        confirmText: "Leave",
+        destructive: true,
+      });
+      if (!confirmed) return;
     }
-  }, [running, stop, cancelAll, onGoHome, onPartialQuit, phases, phaseIndex, phase, secondsLeft]);
+
+    await doLeave();
+  }, [getLiveSecondsLeft, stop, cancelAll, phases, onPartialQuit, onGoHome]);
+
+  // Wire Android hardware back button to the Leave Session flow.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleGoHome();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleGoHome]);
 
   // ── Memoized dynamic styles ──
   const playBtnStyle = useMemo(
@@ -372,7 +793,7 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
   const glowColor = theme.isDark ? DIAL_GLOW : color;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.sessionTop}>
         <TouchableOpacity
@@ -381,7 +802,12 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           accessibilityRole="button"
           accessibilityLabel="Leave session and go home"
         >
-          <Icon name="chevron-left" size={20} color={theme.textSecondary} strokeWidth={2.2} />
+          <Icon
+            name="chevron-left"
+            size={20}
+            color={theme.textSecondary}
+            strokeWidth={2.2}
+          />
         </TouchableOpacity>
         <Text style={styles.sessionLabel}>{session.label}</Text>
         <View style={styles.spacer} />
@@ -390,7 +816,12 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
       {/* ── Subject badge ── */}
       {subject && (
         <View style={styles.subjectBadge}>
-          <View style={[styles.subjectDot, { backgroundColor: subjectColor || theme.accent }]} />
+          <View
+            style={[
+              styles.subjectDot,
+              { backgroundColor: subjectColor || theme.accent },
+            ]}
+          />
           <Text style={styles.subjectBadgeText}>{subject}</Text>
         </View>
       )}
@@ -424,9 +855,15 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
       <View style={styles.legend}>
         {upNext ? (
           <>
-            <View style={[styles.legDot, { backgroundColor: getPhaseColor(phaseIndex + 1) }]} />
+            <View
+              style={[
+                styles.legDot,
+                { backgroundColor: getPhaseColor(phaseIndex + 1) },
+              ]}
+            />
             <Text style={styles.legendText}>
-              Up next · {upNext.isBreak ? `${upNext.duration}-min break` : upNext.name}
+              Up next ·{" "}
+              {upNext.isBreak ? `${upNext.duration}-min break` : upNext.name}
             </Text>
           </>
         ) : (
@@ -442,7 +879,12 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           accessibilityRole="button"
           accessibilityLabel="Reset timer"
         >
-          <Icon name="reset" size={22} color={theme.textPrimary} strokeWidth={2} />
+          <Icon
+            name="reset"
+            size={22}
+            color={theme.textPrimary}
+            strokeWidth={2}
+          />
         </TouchableOpacity>
         <TouchableOpacity
           style={playBtnStyle}
@@ -451,7 +893,11 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           accessibilityLabel={running ? "Pause timer" : "Start timer"}
           accessibilityState={{ selected: running }}
         >
-          <Icon name={running ? "pause" : "play"} size={30} color={theme.onAccent} />
+          <Icon
+            name={running ? "pause" : "play"}
+            size={30}
+            color={theme.onAccent}
+          />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.circleBtnSmall}
@@ -459,7 +905,12 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           accessibilityRole="button"
           accessibilityLabel="Skip to next phase"
         >
-          <Icon name="skip" size={22} color={theme.textPrimary} strokeWidth={2} />
+          <Icon
+            name="skip"
+            size={22}
+            color={theme.textPrimary}
+            strokeWidth={2}
+          />
         </TouchableOpacity>
       </View>
 
@@ -499,7 +950,7 @@ export default function SessionScreen({ session, subject, subjectColor, onGoHome
           <Text style={styles.tipBoxText}>{phase?.tip}</Text>
         </View>
       )}
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

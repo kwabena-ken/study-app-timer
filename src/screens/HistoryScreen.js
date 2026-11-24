@@ -4,9 +4,7 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
-  Alert,
   TextInput,
   RefreshControl,
 } from "react-native";
@@ -17,12 +15,16 @@ import {
   updateSession,
   loadSubjects,
 } from "../utils/storage";
+import { confirmDialog } from "../utils/confirm";
+import { formatStudyDuration } from "../utils/studyTime";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 
 /**
  * Groups an array of session records by day label.
+ * Falls back to `startedAt` when `completedAt` is missing and guards Invalid Date.
  * Returns an array of { label: string, sessions: Array } objects.
  */
 function groupByDay(sessions) {
@@ -35,21 +37,26 @@ function groupByDay(sessions) {
   const map = new Map();
 
   for (const s of sessions) {
-    const d = new Date(s.completedAt);
-    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const raw = s.completedAt || s.startedAt;
+    const d = raw ? new Date(raw) : new Date(NaN);
     let label;
 
-    if (dayStart.getTime() === today.getTime()) {
-      label = "Today";
-    } else if (dayStart.getTime() === yesterday.getTime()) {
-      label = "Yesterday";
+    if (Number.isNaN(d.getTime())) {
+      label = "Unknown date";
     } else {
-      label = dayStart.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year:
-          dayStart.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-      });
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      if (dayStart.getTime() === today.getTime()) {
+        label = "Today";
+      } else if (dayStart.getTime() === yesterday.getTime()) {
+        label = "Yesterday";
+      } else {
+        label = dayStart.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year:
+            dayStart.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+        });
+      }
     }
 
     if (!map.has(label)) {
@@ -67,7 +74,9 @@ function groupByDay(sessions) {
  * Formats an ISO timestamp to a time string like "3:45 PM".
  */
 function formatTimeOfDay(isoString) {
+  if (!isoString) return "";
   const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
@@ -75,7 +84,7 @@ function formatTimeOfDay(isoString) {
 }
 
 /**
- * History screen — shows all completed sessions grouped by day.
+ * History screen — shows all completed and partial sessions grouped by day.
  * Each session card shows its subject (with color dot) and
  * supports inline edit (subject) and delete.
  *
@@ -129,22 +138,16 @@ export default function HistoryScreen({ onGoHome }) {
   }, [subjects]);
 
   // ── Delete a single session ──
-  const handleDelete = useCallback((id) => {
-    Alert.alert(
-      "Delete Session?",
-      "This will permanently remove this session record.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteSession(id);
-            setSessions((prev) => prev.filter((s) => s.id !== id));
-          },
-        },
-      ]
-    );
+  const handleDelete = useCallback(async (id) => {
+    const confirmed = await confirmDialog({
+      title: "Delete Session?",
+      message: "This will permanently remove this session record.",
+      confirmText: "Delete",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await deleteSession(id);
+    setSessions((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
   // ── Inline edit: start ──
@@ -153,15 +156,17 @@ export default function HistoryScreen({ onGoHome }) {
     setEditText(session.subject || "");
   }, []);
 
-  // ── Inline edit: save ──
+  // ── Inline edit: save (also reloads subjects so newly created subjects get colors & chips) ──
   const handleSaveEdit = useCallback(async () => {
-    if (editingId && editText.trim()) {
-      await updateSession(editingId, { subject: editText.trim() });
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === editingId ? { ...s, subject: editText.trim() } : s
-        )
-      );
+    const trimmed = editText.trim();
+    if (editingId && trimmed) {
+      await updateSession(editingId, { subject: trimmed });
+      const [updatedSubjects, updatedSessions] = await Promise.all([
+        loadSubjects(),
+        loadSessions(),
+      ]);
+      setSubjects(updatedSubjects);
+      setSessions(updatedSessions);
     }
     setEditingId(null);
     setEditText("");
@@ -174,22 +179,16 @@ export default function HistoryScreen({ onGoHome }) {
   }, []);
 
   // ── Clear all history ──
-  const handleClear = useCallback(() => {
-    Alert.alert(
-      "Clear History?",
-      "This will permanently delete all your session records.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear All",
-          style: "destructive",
-          onPress: async () => {
-            await clearSessions();
-            setSessions([]);
-          },
-        },
-      ]
-    );
+  const handleClear = useCallback(async () => {
+    const confirmed = await confirmDialog({
+      title: "Clear History?",
+      message: "This will permanently delete all your session records.",
+      confirmText: "Clear All",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await clearSessions();
+    setSessions([]);
   }, []);
 
   const filteredSessions = useMemo(() => {
@@ -227,7 +226,7 @@ export default function HistoryScreen({ onGoHome }) {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>HISTORY</Text>
@@ -247,7 +246,7 @@ export default function HistoryScreen({ onGoHome }) {
         />
 
         <Text style={styles.filterLabel}>Subject</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollRow}>
           {["All", ...subjects.map((subject) => subject.name)].map((subject) => (
             <TouchableOpacity
               key={subject}
@@ -446,12 +445,12 @@ export default function HistoryScreen({ onGoHome }) {
                         {s.phasesCompleted} phase
                         {s.phasesCompleted !== 1 ? "s" : ""} ·{" "}
                         {s.actualStudyMins != null
-                          ? `${Math.round(s.actualStudyMins)}m studied`
-                          : `${s.totalStudyMins}m study`}
+                          ? `${formatStudyDuration(s.actualStudyMins)} studied`
+                          : `${formatStudyDuration(s.totalStudyMins)} study`}
                         {s.completed === false && " · left early"}
                       </Text>
                       <Text style={styles.cardTime}>
-                        {formatTimeOfDay(s.completedAt)}
+                        {formatTimeOfDay(s.completedAt || s.startedAt)}
                       </Text>
                     </>
                   )}
@@ -467,7 +466,7 @@ export default function HistoryScreen({ onGoHome }) {
           </TouchableOpacity>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -508,21 +507,26 @@ const makeStyles = (t) =>
       fontSize: 13,
     },
     filterLine: {
-      flexDirection: "row",
-      gap: 12,
+      flexDirection: "column",
     },
-    filterGroup: { flex: 1 },
+    filterGroup: { width: "100%" },
     filterLabel: {
       color: t.textMuted,
       fontFamily: FONTS.bodySemibold,
       fontSize: 10,
       textTransform: "uppercase",
       letterSpacing: 1,
-      marginTop: 12,
-      marginBottom: 7,
+      marginTop: 10,
+      marginBottom: 6,
+    },
+    filterScrollRow: {
+      flexDirection: "row",
+      gap: 7,
+      alignItems: "center",
     },
     filterRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
       gap: 7,
       alignItems: "center",
     },

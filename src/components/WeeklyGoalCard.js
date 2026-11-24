@@ -3,13 +3,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
 import { computeWeeklyProgress } from "../utils/weeklyGoal";
-
-function formatGoalMins(mins) {
-  if (mins < 60) return `${Math.round(mins)}m`;
-  const hours = Math.floor(mins / 60);
-  const remainder = Math.round(mins % 60);
-  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
-}
+import { formatStudyDuration } from "../utils/studyTime";
 
 export default function WeeklyGoalCard({ sessions, settings, now }) {
   const { theme } = useTheme();
@@ -31,7 +25,7 @@ export default function WeeklyGoalCard({ sessions, settings, now }) {
     <View
       style={[styles.card, complete && styles.cardComplete]}
       accessibilityRole="summary"
-      accessibilityLabel={`Weekly goal: ${formatGoalMins(progress.mins)} of ${formatGoalMins(minsGoal)}, and ${progress.days} of ${daysGoal} study days.`}
+      accessibilityLabel={`Weekly goal: ${formatStudyDuration(progress.mins)} of ${formatStudyDuration(minsGoal)}, and ${progress.days} of ${daysGoal} study days.`}
     >
       <View style={styles.header}>
         <View>
@@ -48,7 +42,7 @@ export default function WeeklyGoalCard({ sessions, settings, now }) {
       <View style={styles.metricRow}>
         <Text style={styles.metricLabel}>Focus time</Text>
         <Text style={styles.metricValue}>
-          {formatGoalMins(progress.mins)} / {formatGoalMins(minsGoal)}
+          {formatStudyDuration(progress.mins)} / {formatStudyDuration(minsGoal)}
         </Text>
       </View>
       <View style={styles.track}>

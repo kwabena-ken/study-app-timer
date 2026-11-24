@@ -4,15 +4,16 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { loadSessions, loadSubjects, loadSettings } from "../utils/storage";
 import { computeStreak } from "../utils/streak";
+import { formatStudyDuration } from "../utils/studyTime";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 import WeeklyGoalCard from "../components/WeeklyGoalCard";
 
@@ -26,19 +27,19 @@ function getStartOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-/** The cutoff date for a range tab. */
+/** The cutoff date for a range tab (aligned with 7 local calendar days for Week). */
 function getFilterDate(tab, now) {
   switch (tab) {
     case "Day":
       return getStartOfDay(now);
     case "Week": {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 7);
+      const d = getStartOfDay(now);
+      d.setDate(d.getDate() - 6);
       return d;
     }
     case "Month": {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 30);
+      const d = getStartOfDay(now);
+      d.setDate(d.getDate() - 29);
       return d;
     }
     default:
@@ -49,14 +50,6 @@ function getFilterDate(tab, now) {
 /** Minutes studied in a session (partials count their actual time). */
 function sessionMins(s) {
   return s.actualStudyMins != null ? s.actualStudyMins : s.totalStudyMins || 0;
-}
-
-/** Format minutes as "Xh Ym" / "Xh" / "Xm". */
-function formatDuration(mins) {
-  if (mins < 60) return `${Math.round(mins)}m`;
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 /** Darken a #rrggbb color by a factor (0–1). Used for gradient stops. */
@@ -108,6 +101,7 @@ export default function StatsScreen() {
   const [sessions, setSessions] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [now, setNow] = useState(() => new Date());
   const [activeTab, setActiveTab] = useState("Week");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,6 +118,7 @@ export default function StatsScreen() {
       setSessions(sessData);
       setSubjects(subData);
       setSettings(savedSettings);
+      setNow(new Date());
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -136,8 +131,6 @@ export default function StatsScreen() {
   useEffect(() => {
     refreshStats();
   }, [refreshStats]);
-
-  const now = useMemo(() => new Date(), []);
 
   // Subject name (lowercased) → identity color.
   const subjectColorMap = useMemo(() => {
@@ -173,10 +166,11 @@ export default function StatsScreen() {
 
   // Per-subject breakdown + totals for the active range.
   const stats = useMemo(() => {
-    const cutoff = getFilterDate(activeTab, now);
-    const filtered = sessions.filter(
-      (s) => new Date(s.completedAt || s.startedAt) >= cutoff
-    );
+    const cutoffMs = getFilterDate(activeTab, now).getTime();
+    const filtered = sessions.filter((s) => {
+      const when = new Date(s.completedAt || s.startedAt).getTime();
+      return !Number.isNaN(when) && when >= cutoffMs;
+    });
 
     const bySubject = {};
     let totalMins = 0;
@@ -198,7 +192,7 @@ export default function StatsScreen() {
   const hasAny = sessions.length > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>STATS</Text>
@@ -255,7 +249,7 @@ export default function StatsScreen() {
             <View
               style={styles.chartCard}
               accessibilityRole="text"
-              accessibilityLabel={`${formatDuration(
+              accessibilityLabel={`${formatStudyDuration(
                 weekTotal
               )} focused in the last seven days.`}
             >
@@ -263,7 +257,7 @@ export default function StatsScreen() {
                 <View>
                   <Text style={styles.cardLabel}>LAST 7 DAYS</Text>
                   <Text style={styles.chartTotal}>
-                    {formatDuration(weekTotal)}
+                    {formatStudyDuration(weekTotal)}
                   </Text>
                 </View>
                 <Text style={styles.chartCaption}>focused</Text>
@@ -358,7 +352,7 @@ export default function StatsScreen() {
             {/* ── Range total ── */}
             <View style={styles.totalRow}>
               <Text style={styles.totalValue}>
-                {formatDuration(stats.totalMins)}
+                {formatStudyDuration(stats.totalMins)}
               </Text>
               <Text style={styles.totalSub}>
                 {stats.totalSessions} session
@@ -387,7 +381,7 @@ export default function StatsScreen() {
                         {s.name}
                       </Text>
                       <Text style={styles.subjectTime}>
-                        {formatDuration(s.mins)}
+                        {formatStudyDuration(s.mins)}
                       </Text>
                     </View>
                     <View style={styles.barBg}>
@@ -410,7 +404,7 @@ export default function StatsScreen() {
             {/* ── Lifetime totals ── */}
             <View style={styles.totRow}>
               <View style={styles.tot}>
-                <Text style={styles.totN}>{formatDuration(lifetime.totalMins)}</Text>
+                <Text style={styles.totN}>{formatStudyDuration(lifetime.totalMins)}</Text>
                 <Text style={styles.totL}>All time</Text>
               </View>
               <View style={styles.tot}>
@@ -418,14 +412,14 @@ export default function StatsScreen() {
                 <Text style={styles.totL}>Sessions</Text>
               </View>
               <View style={styles.tot}>
-                <Text style={styles.totN}>{formatDuration(lifetime.avgMins)}</Text>
+                <Text style={styles.totN}>{formatStudyDuration(lifetime.avgMins)}</Text>
                 <Text style={styles.totL}>Avg</Text>
               </View>
             </View>
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

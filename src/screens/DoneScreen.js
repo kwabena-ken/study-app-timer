@@ -1,20 +1,20 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-} from "react-native";
-import { loadSessions, saveSession } from "../utils/storage";
+  loadSessions,
+  upsertSession,
+  clearActiveSession,
+} from "../utils/storage";
 import { computeStreak } from "../utils/streak";
 import { useTheme } from "../theme/ThemeContext";
 import { FONTS } from "../theme/typography";
+import ScreenContainer from "../components/ScreenContainer";
 import Icon from "../components/Icon";
 
 /**
  * Done screen — shown after completing all phases of a session.
- * Saves the session (with subject) to local storage on mount.
+ * Upserts the finalized session record by `sessionId`, clears any active
+ * checkpoint, and only marks `completed: true` when actual study time > 0.
  *
  * @param {{ session: Object, sessionMeta: Object, onGoHome: () => void }} props
  */
@@ -27,36 +27,55 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
   const [currentStreak, setCurrentStreak] = useState(null);
   const didSaveRef = useRef(false);
 
-  // Save session to local storage (runs once on mount)
+  const actualStudyMins =
+    sessionMeta?.actualStudyMins != null
+      ? sessionMeta.actualStudyMins
+      : phases
+          .filter((p) => !p.isBreak)
+          .reduce((a, p) => a + (p.duration || 0), 0);
+  const hasStudied = actualStudyMins > 0;
+
+  // Save/finalize session to local storage (runs once on mount)
   useEffect(() => {
     if (didSaveRef.current) return;
     didSaveRef.current = true;
 
     const studyPhases = phases.filter((p) => !p.isBreak);
-    const totalStudyMins = studyPhases.reduce((a, p) => a + p.duration, 0);
+    const totalStudyMins = studyPhases.reduce((a, p) => a + (p.duration || 0), 0);
+    const phasesCompleted =
+      sessionMeta?.phasesCompleted != null
+        ? sessionMeta.phasesCompleted
+        : hasStudied
+        ? studyPhases.length
+        : 0;
 
-    saveSession({
-      sessionType: sessionMeta?.sessionKey || "unknown",
-      label: session.label,
-      subject: sessionMeta?.subject || "Unspecified",
-      startedAt: sessionMeta?.startedAt || new Date().toISOString(),
-      phasesCompleted: studyPhases.length,
-      totalStudyMins,
-      actualStudyMins: sessionMeta?.actualStudyMins != null ? sessionMeta.actualStudyMins : totalStudyMins,
-      completed: true,
-    })
+    Promise.all([
+      upsertSession({
+        id: sessionMeta?.sessionId,
+        sessionType: sessionMeta?.sessionKey || "unknown",
+        label: session.label,
+        subject: sessionMeta?.subject || "Unspecified",
+        startedAt: sessionMeta?.startedAt || new Date().toISOString(),
+        completedAt: sessionMeta?.completedAt || new Date().toISOString(),
+        phasesCompleted,
+        totalStudyMins,
+        actualStudyMins,
+        completed: hasStudied,
+      }),
+      clearActiveSession().catch(() => {}),
+    ])
       .then(() => loadSessions())
       .then((sessions) => {
         setCurrentStreak(computeStreak(sessions).current);
         setSaved(true);
       })
       .catch((e) => console.warn("Failed to save session:", e));
-  }, [session, sessionMeta, phases]);
+  }, [session, sessionMeta, phases, actualStudyMins, hasStudied]);
 
   const subjectName = sessionMeta?.subject;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.wrap}>
         <Text style={styles.emoji}>🎉</Text>
         <Text style={styles.title}>Session Complete!</Text>
@@ -68,8 +87,9 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
         )}
 
         <Text style={styles.subtitle}>
-          You finished your full {session.label}. Take a real rest before the
-          next one.
+          {hasStudied
+            ? `You finished your full ${session.label}. Take a real rest before the next one.`
+            : "All phases were skipped with no study time recorded."}
         </Text>
 
         <View style={styles.list}>
@@ -77,7 +97,7 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
             .filter((p) => !p.isBreak)
             .map((p, i) => (
               <View key={i} style={styles.row}>
-                <Text style={styles.check}>✅</Text>
+                <Text style={styles.check}>{hasStudied ? "✅" : "⏭️"}</Text>
                 <Text style={styles.rowText}>{p.name}</Text>
               </View>
             ))}
@@ -85,7 +105,7 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
 
         {saved && (
           <>
-            {currentStreak != null && (
+            {hasStudied && currentStreak > 0 && (
               <Text
                 style={styles.streakText}
                 accessibilityRole="text"
@@ -109,7 +129,7 @@ export default function DoneScreen({ session, sessionMeta, onGoHome }) {
           <Text style={styles.homeButtonText}>Back to Home</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -179,5 +199,9 @@ const makeStyles = (t) =>
       paddingVertical: 13,
       paddingHorizontal: 34,
     },
-    homeButtonText: { color: t.onAccent, fontSize: 14, fontFamily: FONTS.bodyBold },
+    homeButtonText: {
+      color: t.onAccent,
+      fontSize: 14,
+      fontFamily: FONTS.bodyBold,
+    },
   });

@@ -11,6 +11,11 @@ import {
   moveSubject,
   loadSessions,
   saveSession,
+  upsertSession,
+  updateSession,
+  saveActiveSession,
+  loadActiveSession,
+  clearActiveSession,
   loadTemplates,
   saveTemplate,
   deleteTemplate,
@@ -141,6 +146,71 @@ describe("sessions", () => {
     });
     expect(rec.actualStudyMins).toBe(12.5);
     expect(rec.completed).toBe(false);
+  });
+
+  it("upserts a draft session in place by id without creating duplicates", async () => {
+    const draft = await upsertSession({
+      ...base,
+      id: "sess-123",
+      phasesCompleted: 0,
+      actualStudyMins: 0.2,
+      completed: false,
+    });
+    expect(draft.id).toBe("sess-123");
+    expect(draft.completed).toBe(false);
+
+    const finalized = await upsertSession({
+      ...base,
+      id: "sess-123",
+      phasesCompleted: 4,
+      actualStudyMins: 60,
+      completed: true,
+    });
+    expect(finalized.id).toBe("sess-123");
+    expect(finalized.completed).toBe(true);
+    expect(finalized.actualStudyMins).toBe(60);
+
+    const all = await loadSessions();
+    expect(all).toHaveLength(1);
+    expect(all[0].id).toBe("sess-123");
+    expect(all[0].completed).toBe(true);
+  });
+
+  it("auto-registers new subjects when updateSession renames a session subject", async () => {
+    const rec = await saveSession(base);
+    await updateSession(rec.id, { subject: "Organic Chemistry" });
+
+    const subjects = await loadSubjects();
+    expect(subjects.map((s) => s.name)).toContain("Organic Chemistry");
+    const sessions = await loadSessions();
+    expect(sessions[0].subject).toBe("Organic Chemistry");
+  });
+});
+
+describe("active session checkpoint (Option A)", () => {
+  it("saves, loads, and clears an active session snapshot", async () => {
+    expect(await loadActiveSession()).toBeNull();
+
+    const snapshot = {
+      sessionId: "active-1",
+      sessionKey: "1hr",
+      session: { label: "1-Hour Session", phases: [{ name: "Focus", duration: 10 }] },
+      subject: "Biology",
+      startedAt: "2026-01-01T10:00:00.000Z",
+      phaseIndex: 0,
+      secondsLeft: 540,
+      running: true,
+      phaseEndMs: 1_700_000_000_000,
+      actualStudySecs: 0,
+      studyPhasesCompleted: 0,
+      autoAdvance: true,
+    };
+
+    await saveActiveSession(snapshot);
+    expect(await loadActiveSession()).toEqual(snapshot);
+
+    await clearActiveSession();
+    expect(await loadActiveSession()).toBeNull();
   });
 });
 

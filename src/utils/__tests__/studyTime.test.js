@@ -1,4 +1,9 @@
-import { phaseElapsedSecs, minsFromSecs } from "../studyTime";
+import {
+  phaseElapsedSecs,
+  minsFromSecs,
+  formatStudyDuration,
+  reconcileSessionTimeline,
+} from "../studyTime";
 
 describe("phaseElapsedSecs", () => {
   it("returns elapsed seconds for a running study phase", () => {
@@ -29,11 +34,157 @@ describe("minsFromSecs", () => {
     expect(minsFromSecs(150)).toBe(2.5);
     expect(minsFromSecs(90)).toBe(1.5);
     expect(minsFromSecs(0)).toBe(0);
+    expect(minsFromSecs(-10)).toBe(0);
   });
 
   it("rounds to the nearest tenth of a minute", () => {
     expect(minsFromSecs(100)).toBe(1.7); // 1.666… → 1.7
     expect(minsFromSecs(7)).toBe(0.1); // 0.116… → 0.1
+  });
+
+  it("preserves brief >=1s study intervals at 0.1 min minimum", () => {
+    expect(minsFromSecs(1)).toBe(0.1);
+    expect(minsFromSecs(2)).toBe(0.1);
+    expect(minsFromSecs(2.9)).toBe(0.1);
+  });
+});
+
+describe("formatStudyDuration", () => {
+  it("formats zero, sub-minute, minute, and hour durations cleanly", () => {
+    expect(formatStudyDuration(0)).toBe("0m");
+    expect(formatStudyDuration(0.1)).toBe("<1m");
+    expect(formatStudyDuration(0.4)).toBe("<1m");
+    expect(formatStudyDuration(0.9)).toBe("<1m");
+    expect(formatStudyDuration(1)).toBe("1m");
+    expect(formatStudyDuration(25)).toBe("25m");
+    expect(formatStudyDuration(59.6)).toBe("1h");
+    expect(formatStudyDuration(60)).toBe("1h");
+    expect(formatStudyDuration(90)).toBe("1h 30m");
+    expect(formatStudyDuration(119.6)).toBe("2h");
+  });
+});
+
+describe("reconcileSessionTimeline", () => {
+  const twoPhase = [
+    { name: "Deep Study", duration: 1, isBreak: false },
+    { name: "Short Break", duration: 1, isBreak: true },
+  ];
+
+  const threePhase = [
+    { name: "Study 1", duration: 1, isBreak: false },
+    { name: "Break", duration: 1, isBreak: true },
+    { name: "Study 2", duration: 2, isBreak: false },
+  ];
+
+  it("resumes mid-phase with exact wall-clock remaining time and live study credit", () => {
+    const startMs = 1_000_000;
+    const res = reconcileSessionTimeline({
+      phases: twoPhase,
+      phaseIndex: 0,
+      phaseEndMs: startMs + 60_000,
+      actualStudySecs: 0,
+      studyPhasesCompleted: 0,
+      autoAdvance: true,
+      nowMs: startMs + 15_000,
+    });
+
+    expect(res.completedAll).toBe(false);
+    expect(res.phaseEndedWaiting).toBe(false);
+    expect(res.running).toBe(true);
+    expect(res.phaseIndex).toBe(0);
+    expect(res.secondsLeft).toBe(45);
+    expect(res.phaseEndMs).toBe(startMs + 60_000);
+    expect(res.actualStudySecs).toBe(0);
+    expect(res.totalStudySecs).toBe(15);
+    expect(res.studyPhasesCompleted).toBe(0);
+    expect(res.phasesAdvanced).toBe(0);
+  });
+
+  it("advances across multiple elapsed phases when autoAdvance is on", () => {
+    const startMs = 1_000_000;
+    // 150s elapsed: Study 1 (60s) + Break (60s) completed, 30s into Study 2 (120s)
+    const res = reconcileSessionTimeline({
+      phases: threePhase,
+      phaseIndex: 0,
+      phaseEndMs: startMs + 60_000,
+      actualStudySecs: 0,
+      studyPhasesCompleted: 0,
+      autoAdvance: true,
+      nowMs: startMs + 150_000,
+    });
+
+    expect(res.completedAll).toBe(false);
+    expect(res.running).toBe(true);
+    expect(res.phaseIndex).toBe(2);
+    expect(res.secondsLeft).toBe(90);
+    expect(res.phaseEndMs).toBe(startMs + 240_000);
+    expect(res.actualStudySecs).toBe(60); // banked from Study 1 only (break = 0)
+    expect(res.totalStudySecs).toBe(90); // 60 banked + 30 elapsed in Study 2
+    expect(res.studyPhasesCompleted).toBe(1);
+    expect(res.phasesAdvanced).toBe(2);
+  });
+
+  it("completes the full session when background time exceeds all remaining phases (130s on 120s 2-phase)", () => {
+    const startMs = 1_000_000;
+    const res = reconcileSessionTimeline({
+      phases: twoPhase,
+      phaseIndex: 0,
+      phaseEndMs: startMs + 60_000,
+      actualStudySecs: 0,
+      studyPhasesCompleted: 0,
+      autoAdvance: true,
+      nowMs: startMs + 130_000,
+    });
+
+    expect(res.completedAll).toBe(true);
+    expect(res.running).toBe(false);
+    expect(res.secondsLeft).toBe(0);
+    expect(res.actualStudySecs).toBe(60);
+    expect(res.totalStudySecs).toBe(60);
+    expect(res.studyPhasesCompleted).toBe(1);
+    expect(res.phasesAdvanced).toBe(2);
+    expect(res.completedAtMs).toBe(startMs + 120_000);
+  });
+
+  it("pauses at the start of the next phase when autoAdvance is off", () => {
+    const startMs = 1_000_000;
+    const res = reconcileSessionTimeline({
+      phases: twoPhase,
+      phaseIndex: 0,
+      phaseEndMs: startMs + 60_000,
+      actualStudySecs: 0,
+      studyPhasesCompleted: 0,
+      autoAdvance: false,
+      nowMs: startMs + 130_000,
+    });
+
+    expect(res.completedAll).toBe(false);
+    expect(res.phaseEndedWaiting).toBe(true);
+    expect(res.running).toBe(false);
+    expect(res.phaseIndex).toBe(1);
+    expect(res.secondsLeft).toBe(60);
+    expect(res.phaseEndMs).toBeNull();
+    expect(res.actualStudySecs).toBe(60);
+    expect(res.totalStudySecs).toBe(60);
+    expect(res.studyPhasesCompleted).toBe(1);
+    expect(res.phasesAdvanced).toBe(1);
+  });
+
+  it("completes the session when final phase finishes even if autoAdvance is off", () => {
+    const startMs = 1_000_000;
+    const res = reconcileSessionTimeline({
+      phases: twoPhase,
+      phaseIndex: 1,
+      phaseEndMs: startMs + 60_000,
+      actualStudySecs: 60,
+      studyPhasesCompleted: 1,
+      autoAdvance: false,
+      nowMs: startMs + 70_000,
+    });
+
+    expect(res.completedAll).toBe(true);
+    expect(res.actualStudySecs).toBe(60);
+    expect(res.studyPhasesCompleted).toBe(1);
   });
 });
 
